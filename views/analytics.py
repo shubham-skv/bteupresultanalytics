@@ -241,6 +241,7 @@ def check_pass(r):
 @st.cache_data(ttl=30)
 def load_results():
     df = get_all_results()
+    df["branch"] = df["branch"].str.replace("Semster", "Semester")
     df["marks_obtained_int"] = df["marks_obtained"].apply(marks_int)
     df["max_marks_int"]      = df["max_marks"].apply(marks_int)
     df["min_marks_int"]      = df["min_marks"].apply(marks_int)
@@ -250,7 +251,7 @@ def load_results():
 
 @st.cache_data(ttl=30)
 def build_student_summary(df: pd.DataFrame) -> pd.DataFrame:
-    summary = df.groupby(["enrollment", "student_name", "father_name", "branch", "grand_total"]).agg(
+    summary = df.groupby(["enrollment", "student_name", "father_name", "branch", "grand_total", "dob"]).agg(
         subjects_attempted=("paper_name", "count"),
         total_obtained=("marks_obtained_int", "sum"),
     ).reset_index()
@@ -324,7 +325,7 @@ def render():
             branch_stats["failed"] = branch_stats["students"] - branch_stats["passed"]
             branch_stats["pass_rate"] = (branch_stats["clear_pass"] / branch_stats["students"] * 100).round(1)
             branch_stats["avg_score"] = branch_stats["avg_score"].round(1)
-            branch_stats["branch_short"] = branch_stats["branch"].str[:25]
+            branch_stats["branch_short"] = branch_stats["branch"]
 
             fig = px.bar(
                 branch_stats, x="branch_short", y="avg_score",
@@ -410,7 +411,63 @@ def render():
                 }),
                 use_container_width=True
             )
-            render_download_buttons(display_b, f"Full Branch Result - {selected_branch[:15]}")
+            render_download_buttons(display_b, f"Full Branch Result - {selected_branch}")
+            
+            st.markdown("#### Download Original BTEUP Result PDFs")
+            st.markdown("Download a ZIP archive containing the exact original result PDF for every student in this branch, generated directly from the BTEUP website.")
+            zip_cache_key = f"orig_zip_{selected_branch}"
+            if zip_cache_key not in st.session_state:
+                if st.button("📦 Generate Original PDFs ZIP (Takes 1-2 sec per student)", key="gen_orig_zip", use_container_width=True):
+                    prog_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    import io, zipfile, base64, shutil
+                    try:
+                        import pdfkit
+                        wk_path = shutil.which("wkhtmltopdf")
+                        cfg = pdfkit.configuration(wkhtmltopdf=wk_path) if wk_path else None
+                        opts = {'quiet': '', 'javascript-delay': '500'}
+                        
+                        zip_buffer = io.BytesIO()
+                        total = len(branch_students)
+                        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zf:
+                            for i, (_, row_data) in enumerate(branch_students.iterrows()):
+                                enroll = str(row_data["enrollment"]).strip()
+                                dob = str(row_data.get("dob", "")).strip()
+                                branch_clean = str(row_data.get("branch", "Result")).replace("/", "_").replace(":", "")
+                                
+                                status_text.text(f"Generating PDF for {enroll}... ({i+1}/{total})")
+                                prog_bar.progress((i + 1) / total)
+                                
+                                enr_b64 = base64.b64encode(enroll.encode()).decode()
+                                dob_b64 = base64.b64encode(dob.encode()).decode()
+                                url = f"https://result.bteexam.com/even/main/oddresult.aspx?id={enr_b64}&id2={dob_b64}"
+                                try:
+                                    if cfg:
+                                        pdf_data = pdfkit.from_url(url, False, options=opts, configuration=cfg)
+                                    else:
+                                        pdf_data = pdfkit.from_url(url, False, options=opts)
+                                    if pdf_data:
+                                        zf.writestr(f"{branch_clean}_{enroll}.pdf", pdf_data)
+                                except Exception:
+                                    pass
+                        
+                        status_text.empty()
+                        prog_bar.empty()
+                        st.session_state[zip_cache_key] = zip_buffer.getvalue()
+                        st.rerun()
+                    except ImportError:
+                        status_text.error("pdfkit is not installed. Please add it to requirements.txt")
+            else:
+                st.success("Original PDFs ZIP generated successfully!")
+                st.download_button(
+                    "📥 Download ZIP Archive", 
+                    data=st.session_state[zip_cache_key], 
+                    file_name=f"Original_Results_{selected_branch.replace(' ', '_')}.zip", 
+                    mime="application/zip", 
+                    use_container_width=True, 
+                    type="primary"
+                )
 
             st.markdown("#### Subject Performance (this branch)")
             branch_raw = raw_df[raw_df["branch"] == selected_branch].copy()
@@ -482,7 +539,6 @@ def render():
                 st.markdown("#### Per-Branch Comparison")
                 branch_subj = subj_df.groupby("branch")["marks_obtained_int"].mean().round(1).reset_index()
                 branch_subj.columns = ["Branch","Avg Marks"]
-                branch_subj["Branch"] = branch_subj["Branch"].str[:20]
                 fig_bcomp = px.bar(branch_subj, x="Branch", y="Avg Marks",
                     color="Avg Marks", color_continuous_scale="Plasma",
                     template="plotly_dark")
@@ -514,30 +570,30 @@ def render():
 
             with d_col1:
                 st.download_button(
-                    f"📥 Download {sel_subject[:20]} CSV", 
+                    f"📥 Download CSV", 
                     data=export_subj.to_csv(index=False).encode("utf-8"), 
-                    file_name=f"subject_{sel_subject[:20].replace(' ','_')}.csv", 
+                    file_name=f"subject_{sel_subject.replace(' ','_')}.csv", 
                     mime="text/csv", use_container_width=True
                 )
             with d_col2:
                 st.download_button(
-                    f"📥 Download {sel_subject[:20]} Excel", 
+                    f"📥 Download Excel", 
                     data=to_excel_bytes(export_subj), 
-                    file_name=f"subject_{sel_subject[:20].replace(' ','_')}.xlsx", 
+                    file_name=f"subject_{sel_subject.replace(' ','_')}.xlsx", 
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True
                 )
             with d_col3:
-                cache_key = f"pdf_subj_{sel_subject[:20].replace(' ','_')}"
+                cache_key = f"pdf_subj_{sel_subject.replace(' ','_')}"
                 if cache_key not in st.session_state:
-                    if st.button(f"🚀 Prepare {sel_subject[:20]} PDF", key=f"prep_pdf_{cache_key}", use_container_width=True):
+                    if st.button(f"🚀 Prepare PDF", key=f"prep_pdf_{cache_key}", use_container_width=True):
                         with st.spinner(f"Preparing PDF for {len(export_subj)} records..."):
                             st.session_state[cache_key] = to_pdf_bytes(export_subj, title=f"Subject Result: {sel_subject}")
                         st.rerun()
                 else:
                     st.download_button(
-                        f"📥 Download {sel_subject[:20]} PDF", 
+                        f"📥 Download PDF", 
                         data=st.session_state[cache_key], 
-                        file_name=f"subject_{sel_subject[:20].replace(' ','_')}.pdf", 
+                        file_name=f"subject_{sel_subject.replace(' ','_')}.pdf", 
                         mime="application/pdf", use_container_width=True
                     )
 
@@ -572,7 +628,7 @@ def render():
         else:
             b_top.index = range(1, len(b_top)+1)
             st.dataframe(b_top.rename(columns={"enrollment":"Enrollment","student_name":"Name","percentage":"Percentage (%)","score":"Score","status":"Status"}), use_container_width=True)
-            render_download_buttons(b_top, f"Branch Toppers - {b_sel[:15]}")
+            render_download_buttons(b_top, f"Branch Toppers - {b_sel}")
 
         st.markdown("---")
         st.markdown("### 📅 Year-wise Toppers (Top 10)")

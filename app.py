@@ -231,14 +231,16 @@ if st.session_state.page == "home":
                 
                 st.info(f"Loaded {len(display_b)} student records for this branch.")
                 
+                pdf_bytes = to_pdf_bytes(display_b, f"Full Branch Result - {selected_b}")
+                
                 cache_key = f"pdf_home_{selected_b}"
                 if cache_key not in st.session_state:
                     if st.button("🚀 Generate PDF (Includes Photos)", use_container_width=True):
                         with st.spinner(f"Downloading photos and rendering PDF for {len(display_b)} students... Please wait."):
-                            st.session_state[cache_key] = to_pdf_bytes(display_b, f"Full Branch Result - {selected_b[:15]}")
+                            st.session_state[cache_key] = to_pdf_bytes(display_b, f"Full Branch Result - {selected_b}")
                         st.rerun()
                 else:
-                    file_prefix = f"Branch_{selected_b[:15]}".replace(' ', '_').replace('/', '_')
+                    file_prefix = f"Branch_{selected_b}".replace(' ', '_').replace('/', '_').replace('[', '').replace(']', '')
                     st.success("PDF generated successfully!")
                     st.download_button("📥 Click here to Download PDF", data=st.session_state[cache_key], file_name=f"{file_prefix}.pdf", mime="application/pdf", use_container_width=True, type="primary")
         else:
