@@ -214,7 +214,14 @@ def render_download_buttons(df: pd.DataFrame, prefix: str):
     with col1:
         st.download_button(f"📥 CSV", data=df.to_csv(index=False).encode("utf-8"), file_name=f"{file_prefix}.csv", mime="text/csv", use_container_width=True, key=f"dl_csv_{file_prefix}")
     with col2:
-        st.download_button(f"📥 PDF", data=to_pdf_bytes(df, title=prefix), file_name=f"{file_prefix}.pdf", mime="application/pdf", use_container_width=True, key=f"dl_pdf_{file_prefix}")
+        cache_key = f"pdf_bytes_{file_prefix}"
+        if cache_key not in st.session_state:
+            if st.button("🚀 Prepare PDF", key=f"prep_pdf_{file_prefix}", use_container_width=True):
+                with st.spinner(f"Preparing PDF for {len(df)} records..."):
+                    st.session_state[cache_key] = to_pdf_bytes(df, title=prefix)
+                st.rerun()
+        else:
+            st.download_button(f"📥 Download PDF", data=st.session_state[cache_key], file_name=f"{file_prefix}.pdf", mime="application/pdf", use_container_width=True, key=f"dl_pdf_{file_prefix}")
 
 
 def check_pass(r):
@@ -520,13 +527,19 @@ def render():
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True
                 )
             with d_col3:
-                pdf_bytes = to_pdf_bytes(export_subj, title=f"Subject Result: {sel_subject}")
-                st.download_button(
-                    f"📥 Download {sel_subject[:20]} PDF", 
-                    data=pdf_bytes, 
-                    file_name=f"subject_{sel_subject[:20].replace(' ','_')}.pdf", 
-                    mime="application/pdf", use_container_width=True
-                )
+                cache_key = f"pdf_subj_{sel_subject[:20].replace(' ','_')}"
+                if cache_key not in st.session_state:
+                    if st.button(f"🚀 Prepare {sel_subject[:20]} PDF", key=f"prep_pdf_{cache_key}", use_container_width=True):
+                        with st.spinner(f"Preparing PDF for {len(export_subj)} records..."):
+                            st.session_state[cache_key] = to_pdf_bytes(export_subj, title=f"Subject Result: {sel_subject}")
+                        st.rerun()
+                else:
+                    st.download_button(
+                        f"📥 Download {sel_subject[:20]} PDF", 
+                        data=st.session_state[cache_key], 
+                        file_name=f"subject_{sel_subject[:20].replace(' ','_')}.pdf", 
+                        mime="application/pdf", use_container_width=True
+                    )
 
 
     with tab_toppers:
