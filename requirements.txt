@@ -7,3 +7,4 @@ beautifulsoup4>=4.12.0
 plotly>=5.20.0
 urllib3>=2.0.0
 fpdf==1.7.2
+pdfkit>=1.0.0
