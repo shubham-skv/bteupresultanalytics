@@ -67,7 +67,13 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
     if "S.No" not in df.columns:
         df.insert(0, "S.No", range(1, len(df) + 1))
 
-    pdf = FPDF(orientation="L")
+    # Dynamic orientation
+    is_landscape = len(df.columns) > 6
+    orientation = "L" if is_landscape else "P"
+    total_w = 277 if is_landscape else 190
+    page_h = 190 if is_landscape else 277 # safe trigger height for new page
+
+    pdf = FPDF(orientation=orientation)
     pdf.set_auto_page_break(auto=False)
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
@@ -76,24 +82,23 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
     
     pdf.set_font("Arial", "B", 8)
     
-    # Calculate widths based on column names
-    total_w = 277
-    w = []
+    # Calculate base weight for columns
+    w_base = []
     for col in df.columns:
         c = str(col).lower()
-        if "s.no" in c: w.append(10)
-        elif "enrollment" in c: w.append(32)
-        elif "name" in c or "father" in c or "topper" in c: w.append(35)
-        elif "branch" in c or "subject" in c: w.append(42)
-        elif "status" in c: w.append(16)
-        elif "obtained" in c: w.append(24)
-        elif "min" in c or "max" in c: w.append(18)
-        elif "score" in c or "mark" in c or "percent" in c or "total" in c: w.append(20)
-        else: w.append(20)
+        if "s.no" in c: w_base.append(10)
+        elif "enrollment" in c: w_base.append(32)
+        elif "name" in c or "father" in c or "topper" in c: w_base.append(35)
+        elif "branch" in c or "subject" in c: w_base.append(42)
+        elif "status" in c: w_base.append(16)
+        elif "obtained" in c: w_base.append(24)
+        elif "min" in c or "max" in c: w_base.append(18)
+        elif "score" in c or "mark" in c or "percent" in c or "total" in c: w_base.append(20)
+        else: w_base.append(20)
         
-    sum_w = sum(w)
-    if sum_w > total_w:
-        w = [int((x / sum_w) * total_w) for x in w]
+    # Unconditionally stretch to fill the entire page width
+    sum_w = sum(w_base)
+    w = [(x / sum_w) * total_w for x in w_base]
         
     line_h = 5
     for i, col in enumerate(df.columns):
@@ -118,7 +123,7 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
                 
         row_h = max_lines * line_h
         
-        if pdf.get_y() + row_h > 190:
+        if pdf.get_y() + row_h > page_h:
             pdf.add_page()
             # Reprint headers
             pdf.set_font("Arial", "B", 8)
