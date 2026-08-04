@@ -208,6 +208,35 @@ if st.session_state.page == "home":
     | 3️⃣ | **📊 Analytics** | Explore branch-wise, subject-wise results, search for students, view toppers, and export all data. |
     """)
 
+    st.markdown("---")
+    st.markdown("### 📥 Quick PDF Download")
+    st.markdown("Select a branch to instantly generate and download its complete result sheet as a PDF.")
+    try:
+        from views.analytics import load_results, build_student_summary, to_pdf_bytes
+        raw_df = load_results()
+        if not raw_df.empty:
+            student_df = build_student_summary(raw_df)
+            branches = sorted([b for b in student_df["branch"].unique() if b])
+            
+            selected_b = st.selectbox("Select Branch", ["-- Select a branch --"] + branches, key="home_branch_dl")
+            if selected_b and selected_b != "-- Select a branch --":
+                branch_students = student_df[student_df["branch"] == selected_b].copy()
+                display_b = branch_students[["enrollment","student_name","father_name","score","grand_total","status","passed"]].copy()
+                display_b["Status"] = display_b.apply(lambda row: f"✅ {row['status']}" if row["passed"] else f"❌ {row['status']}", axis=1)
+                display_b = display_b.drop(["status", "passed"], axis=1)
+                display_b.index = range(1, len(display_b)+1)
+                display_b = display_b.rename(columns={
+                    "enrollment":"Enrollment","student_name":"Name","father_name":"Father","score":"Score","grand_total":"Grand Total"
+                })
+                
+                pdf_bytes = to_pdf_bytes(display_b, f"Full Branch Result - {selected_b[:15]}")
+                file_prefix = f"Branch_{selected_b[:15]}".replace(' ', '_').replace('/', '_')
+                st.download_button("📥 Download Result PDF", data=pdf_bytes, file_name=f"{file_prefix}.pdf", mime="application/pdf", use_container_width=True, type="primary")
+        else:
+            st.info("No result data found yet. Fetch results first!")
+    except Exception as e:
+        pass
+
 elif st.session_state.page == "nominal":
     nominal.render()
 elif st.session_state.page == "fetch":
