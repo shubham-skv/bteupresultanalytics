@@ -62,10 +62,20 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
     except ImportError:
         return b"Error: fpdf is not installed"
         
+    import os
+    import tempfile
+    import requests
+    
     # Add S.No.
     df = df.copy()
     if "S.No" not in df.columns:
         df.insert(0, "S.No", range(1, len(df) + 1))
+        
+    cols_lower = [str(c).lower() for c in df.columns]
+    has_enroll = "enrollment" in cols_lower
+    if has_enroll:
+        enr_idx = cols_lower.index("enrollment")
+        df.insert(enr_idx + 1, "Photo", "")
 
     # Dynamic orientation
     is_landscape = len(df.columns) > 6
@@ -88,6 +98,7 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
         c = str(col).lower()
         if "s.no" in c: w_base.append(10)
         elif "enrollment" in c: w_base.append(32)
+        elif "photo" in c: w_base.append(18)
         elif "name" in c or "father" in c or "topper" in c: w_base.append(35)
         elif "branch" in c or "subject" in c: w_base.append(42)
         elif "status" in c: w_base.append(16)
@@ -106,6 +117,12 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
     pdf.ln()
     
     pdf.set_font("Arial", "", 8)
+    
+    # Dummy PDF for exact height calculation
+    dummy = FPDF(orientation=orientation)
+    dummy.add_page()
+    dummy.set_font("Arial", "", 8)
+    
     for _, row in df.iterrows():
         # Clean text
         row_strs = []
@@ -113,15 +130,19 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
             val = str(row[col]).encode('latin-1', 'ignore').decode('latin-1').strip()
             row_strs.append(val)
             
-        # Calculate max lines
-        max_lines = 1
+        # Calculate exact max height
+        max_h = line_h
         for i, val in enumerate(row_strs):
-            text_w = pdf.get_string_width(val)
-            lines = int((text_w / (w[i] - 2)) + 1)
-            if lines > max_lines:
-                max_lines = lines
+            dummy.set_xy(10, 10)
+            dummy.multi_cell(w[i], line_h, val)
+            h = dummy.get_y() - 10
+            if h > max_h:
+                max_h = h
                 
-        row_h = max_lines * line_h
+        if has_enroll:
+            max_h = max(max_h, 22) # ensure room for photo
+            
+        row_h = max_h
         
         if pdf.get_y() + row_h > page_h:
             pdf.add_page()
@@ -139,7 +160,33 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
             x = pdf.get_x()
             y = pdf.get_y()
             pdf.rect(x, y, w[i], row_h)
-            pdf.multi_cell(w[i], line_h, val, border=0, align="L")
+            
+            c_name = str(df.columns[i]).lower()
+            if c_name == "photo" and has_enroll:
+                # get enrollment val
+                enr_val = str(row.get("enrollment", row.get("Enrollment", ""))).strip()
+                if enr_val:
+                    img_url = f"https://bteup.ac.in/PDFFILES/STUDENTIMAGES/P{enr_val}.jpg"
+                    img_path = os.path.join(tempfile.gettempdir(), f"{enr_val}.jpg")
+                    if not os.path.exists(img_path):
+                        try:
+                            r = requests.get(img_url, timeout=2)
+                            if r.status_code == 200:
+                                with open(img_path, "wb") as f:
+                                    f.write(r.content)
+                        except:
+                            pass
+                    if os.path.exists(img_path):
+                        try:
+                            img_h = 18
+                            img_y = y + (row_h - img_h) / 2
+                            if img_y < y + 1: img_y = y + 1
+                            pdf.image(img_path, x=x+1, y=img_y, w=w[i]-2)
+                        except:
+                            pass
+            else:
+                pdf.multi_cell(w[i], line_h, val, border=0, align="L")
+                
             pdf.set_xy(x + w[i], y)
             
         pdf.set_xy(start_x, start_y + row_h)
