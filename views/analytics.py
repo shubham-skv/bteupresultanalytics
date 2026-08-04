@@ -72,10 +72,14 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
         df.insert(0, "S.No", range(1, len(df) + 1))
         
     cols_lower = [str(c).lower() for c in df.columns]
-    has_enroll = "enrollment" in cols_lower
+    has_enroll = False
+    for c in cols_lower:
+        if "enrollment" in c:
+            has_enroll = True
+            break
+            
     if has_enroll:
-        enr_idx = cols_lower.index("enrollment")
-        df.insert(enr_idx + 1, "Photo", "")
+        df.insert(1, "Photo", "")
 
     # Dynamic orientation
     is_landscape = len(df.columns) > 6
@@ -174,14 +178,22 @@ def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
                             if r.status_code == 200:
                                 with open(img_path, "wb") as f:
                                     f.write(r.content)
+                                from PIL import Image, ImageOps
+                                with Image.open(img_path) as im:
+                                    im = ImageOps.exif_transpose(im)
+                                    im = im.convert("RGB")
+                                    im = ImageOps.fit(im, (140, 180), Image.Resampling.LANCZOS)
+                                    im.save(img_path, "JPEG", quality=85)
                         except:
                             pass
                     if os.path.exists(img_path):
                         try:
                             img_h = 18
+                            img_w = 14
                             img_y = y + (row_h - img_h) / 2
                             if img_y < y + 1: img_y = y + 1
-                            pdf.image(img_path, x=x+1, y=img_y, w=w[i]-2)
+                            img_x = x + (w[i] - img_w) / 2
+                            pdf.image(img_path, x=img_x, y=img_y, w=img_w, h=img_h)
                         except:
                             pass
             else:
@@ -541,12 +553,12 @@ def render():
         st.markdown("---")
         st.markdown("### 🏫 Branch-wise Toppers (Top 10)")
         b_sel = st.selectbox("Select Branch for Toppers", branches, key="topper_b_sel")
-        b_top = clear_students[clear_students["branch"] == b_sel].head(10)[["student_name","percentage","score","status"]]
+        b_top = clear_students[clear_students["branch"] == b_sel].head(10)[["enrollment","student_name","percentage","score","status"]]
         if b_top.empty:
             st.info("No clear pass students found in this branch.")
         else:
             b_top.index = range(1, len(b_top)+1)
-            st.dataframe(b_top.rename(columns={"student_name":"Name","percentage":"Percentage (%)","score":"Score","status":"Status"}), use_container_width=True)
+            st.dataframe(b_top.rename(columns={"enrollment":"Enrollment","student_name":"Name","percentage":"Percentage (%)","score":"Score","status":"Status"}), use_container_width=True)
             render_download_buttons(b_top, f"Branch Toppers - {b_sel[:15]}")
 
         st.markdown("---")
@@ -556,9 +568,9 @@ def render():
             tabs_y = st.tabs(years)
             for i, y in enumerate(years):
                 with tabs_y[i]:
-                    y_top = clear_students[clear_students["year"] == y].head(10)[["student_name","branch","percentage","score","status"]]
+                    y_top = clear_students[clear_students["year"] == y].head(10)[["enrollment","student_name","branch","percentage","score","status"]]
                     y_top.index = range(1, len(y_top)+1)
-                    st.dataframe(y_top.rename(columns={"student_name":"Name","branch":"Branch","percentage":"Percentage (%)","score":"Score","status":"Status"}), use_container_width=True)
+                    st.dataframe(y_top.rename(columns={"enrollment":"Enrollment","student_name":"Name","branch":"Branch","percentage":"Percentage (%)","score":"Score","status":"Status"}), use_container_width=True)
                     render_download_buttons(y_top, f"Year Toppers - {y}")
 
         st.markdown("---")
