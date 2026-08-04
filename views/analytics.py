@@ -421,12 +421,10 @@ def render():
                     prog_bar = st.progress(0)
                     status_text = st.empty()
                     
-                    import io, zipfile, base64, shutil
+                    import io, zipfile, base64
+                    import requests
                     try:
-                        import pdfkit
-                        wk_path = shutil.which("wkhtmltopdf")
-                        cfg = pdfkit.configuration(wkhtmltopdf=wk_path) if wk_path else None
-                        opts = {'quiet': '', 'javascript-delay': '500'}
+                        from weasyprint import HTML
                         
                         zip_buffer = io.BytesIO()
                         total = len(branch_students)
@@ -443,12 +441,12 @@ def render():
                                 dob_b64 = base64.b64encode(dob.encode()).decode()
                                 url = f"https://result.bteexam.com/even/main/oddresult.aspx?id={enr_b64}&id2={dob_b64}"
                                 try:
-                                    if cfg:
-                                        pdf_data = pdfkit.from_url(url, False, options=opts, configuration=cfg)
-                                    else:
-                                        pdf_data = pdfkit.from_url(url, False, options=opts)
-                                    if pdf_data:
-                                        zf.writestr(f"{branch_clean}_{enroll}.pdf", pdf_data)
+                                    # Fetch HTML first because BTEUP has broken SSL which weasyprint strictly enforces
+                                    resp = requests.get(url, verify=False, timeout=15)
+                                    if resp.status_code == 200:
+                                        pdf_data = HTML(string=resp.text, base_url="https://result.bteexam.com/").write_pdf()
+                                        if pdf_data:
+                                            zf.writestr(f"{branch_clean}_{enroll}.pdf", pdf_data)
                                 except Exception:
                                     pass
                         
@@ -457,7 +455,7 @@ def render():
                         st.session_state[zip_cache_key] = zip_buffer.getvalue()
                         st.rerun()
                     except ImportError:
-                        status_text.error("pdfkit is not installed. Please add it to requirements.txt")
+                        status_text.error("weasyprint is not installed. Please add it to requirements.txt")
             else:
                 st.success("Original PDFs ZIP generated successfully!")
                 st.download_button(
