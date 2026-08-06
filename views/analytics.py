@@ -239,8 +239,8 @@ def check_pass(r):
     return True # default to pass if no specific rules apply and min_marks is 0
 
 @st.cache_data(ttl=30)
-def load_results():
-    df = get_all_results()
+def load_results(institute: str = None):
+    df = get_all_results(institute)
     df["branch"] = df["branch"].str.replace("Semster", "Semester")
     df["marks_obtained_int"] = df["marks_obtained"].apply(marks_int)
     df["max_marks_int"]      = df["max_marks"].apply(marks_int)
@@ -269,12 +269,13 @@ def build_student_summary(df: pd.DataFrame) -> pd.DataFrame:
 def render():
     st.markdown('<div class="section-header">📊 Analytics Dashboard</div>', unsafe_allow_html=True)
 
-    result_count = get_result_count()
+    current_inst = st.session_state.get('current_institute')
+    result_count = get_result_count(current_inst)
     if result_count == 0:
-        st.warning("⚠️ No results in database yet. Please go to **🌐 Fetch Results** to download results first.")
+        st.warning("⚠️ No results in database yet for the selected institute. Please go to **🌐 Fetch Results** to download results first.")
         return
 
-    raw_df = load_results()
+    raw_df = load_results(current_inst)
     student_df = build_student_summary(raw_df)
 
     # ── Global KPIs ───────────────────────────────────────────────────────────────

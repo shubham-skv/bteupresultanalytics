@@ -6,7 +6,7 @@ import streamlit as st
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
-from core.db import get_student_count, get_result_count
+from core.db import get_student_count, get_result_count, get_institutes
 from views import nominal, fetch, analytics
 
 st.set_page_config(
@@ -143,8 +143,18 @@ with st.sidebar:
     st.markdown("## 🎓 BTEUP Suite")
     st.markdown("---")
     
-    student_count = get_student_count()
-    result_count  = get_result_count()
+    institutes = get_institutes()
+    if institutes:
+        selected_inst = st.selectbox("🏢 Select Your Institute", ["All Institutes"] + institutes, key="global_institute")
+        if selected_inst == "All Institutes":
+            st.session_state.current_institute = None
+        else:
+            st.session_state.current_institute = selected_inst
+    else:
+        st.session_state.current_institute = None
+        
+    student_count = get_student_count(st.session_state.current_institute)
+    result_count  = get_result_count(st.session_state.current_institute)
     
     st.metric("Students in DB", student_count)
     st.metric("Results Fetched", result_count)
@@ -164,6 +174,31 @@ with st.sidebar:
     nav_button("Fetch Results", "fetch", "🌐")
     nav_button("Analytics", "analytics", "📊")
     nav_button("Settings & Data", "settings", "⚙️")
+
+    st.markdown("---")
+    
+    with st.expander("💾 Database Backup & Restore", expanded=False):
+        st.markdown("<small>Streamlit Cloud deletes files on reboot. Download a backup of your database to keep it safe.</small>", unsafe_allow_html=True)
+        
+        db_path = os.path.join(os.path.dirname(__file__), "bteup_data.db")
+        if os.path.exists(db_path):
+            with open(db_path, "rb") as f:
+                st.download_button(
+                    label="📥 Download Database Backup",
+                    data=f,
+                    file_name="bteup_data.db",
+                    mime="application/octet-stream",
+                    use_container_width=True
+                )
+        
+        st.markdown("<small>Restore a previously downloaded database:</small>", unsafe_allow_html=True)
+        uploaded_db = st.file_uploader("Upload DB File", type=["db"], label_visibility="collapsed")
+        if uploaded_db:
+            if st.button("📤 Restore Database", use_container_width=True, type="primary"):
+                with open(db_path, "wb") as f:
+                    f.write(uploaded_db.getbuffer())
+                st.success("Database restored! Please reload the app.")
+                st.rerun()
 
     st.markdown("---")
     st.caption("BTEUP Analytics Suite v2.0")
@@ -213,7 +248,7 @@ if st.session_state.page == "home":
     st.markdown("Select a branch to instantly generate and download its complete result sheet as a PDF.")
     try:
         from views.analytics import load_results, build_student_summary, to_pdf_bytes
-        raw_df = load_results()
+        raw_df = load_results(st.session_state.current_institute)
         if not raw_df.empty:
             student_df = build_student_summary(raw_df)
             branches = sorted([b for b in student_df["branch"].unique() if b])

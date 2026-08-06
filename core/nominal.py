@@ -59,16 +59,21 @@ def _format_dob(val) -> str | None:
     return s
 
 
-def parse_excel(file_obj_or_path, source_label: str = "NOMINAL.xlsx") -> list[dict]:
+def parse_excel(file_obj, source_label: str = "NOMINAL.xlsx", institute_name: str = "Unknown Institute") -> list[dict]:
     """
-    Parse all sheets of NOMINAL.xlsx.
-    Returns list of student dicts.
+    Extract nominal register data from an Excel file (.xlsx)
+    Supports multiple sheets (one per branch/semester).
     """
-    xl = pd.ExcelFile(file_obj_or_path)
+    try:
+        xls = pd.ExcelFile(file_obj)
+    except Exception as e:
+        raise ValueError(f"Could not read Excel file: {e}")
+        
     students = []
-    for sheet_name in xl.sheet_names:
-        df = xl.parse(sheet_name)
+    
+    for sheet_name in xls.sheet_names:
         semester, branch = _parse_sheet_name(sheet_name)
+        df = pd.read_excel(xls, sheet_name=sheet_name)
         # Normalise column names
         df.columns = [str(c).strip() for c in df.columns]
         # Find relevant columns (case-insensitive)
@@ -107,6 +112,7 @@ def parse_excel(file_obj_or_path, source_label: str = "NOMINAL.xlsx") -> list[di
                 "semester": semester,
                 "rollno": str(row.get(col_map.get("rollno", ""), "")).strip(),
                 "source_file": source_label,
+                "institute": institute_name,
             })
     return students
 
@@ -115,7 +121,7 @@ def parse_excel(file_obj_or_path, source_label: str = "NOMINAL.xlsx") -> list[di
 # PDF parser  (pdfplumber + Regex)
 # ---------------------------------------------------------------------------
 
-def parse_pdf(file_obj, source_label: str = "NOMINAL.pdf") -> list[dict]:
+def parse_pdf(file_obj, source_label: str = "NOMINAL.pdf", institute_name: str = None) -> list[dict]:
     """
     Extract nominal register data from a PDF using pdfplumber.
     Uses regex line-by-line parsing which is much more robust against
@@ -138,6 +144,8 @@ def parse_pdf(file_obj, source_label: str = "NOMINAL.pdf") -> list[dict]:
         "electronics": "Electronics Engineering",
         "information": "Information Technology",
     }
+    
+    current_institute = institute_name or "Unknown Institute"
 
     # Regex to match: Enrollment (E+14 digits), Roll No (digits), Names, DOB (dd/mm/yyyy)
     student_pattern = re.compile(r'\b(E[A-Za-z0-9]{13,})\s+(\d+)\s+(.+?)\s+(\d{2}/\d{2}/\d{4})\b')
@@ -146,6 +154,12 @@ def parse_pdf(file_obj, source_label: str = "NOMINAL.pdf") -> list[dict]:
         for page in pdf.pages:
             text = page.extract_text() or ""
             text_upper = text.upper()
+            
+            # Detect institute if not manually provided
+            if not institute_name:
+                inst_match = re.search(r"INSTITUTION\s*:\s*(.+)", text_upper)
+                if inst_match:
+                    current_institute = inst_match.group(1).strip()
             
             # Detect branch & semester
             for kw, branch_full in branch_keywords.items():
@@ -209,8 +223,9 @@ def parse_pdf(file_obj, source_label: str = "NOMINAL.pdf") -> list[dict]:
                                 "dob": dob,
                                 "branch": current_branch,
                                 "semester": current_semester,
-                                "rollno": roll,
+                                "rollno": str(roll).strip(),
                                 "source_file": source_label,
+                                "institute": current_institute,
                             })
                             students_found_on_page += 1
 

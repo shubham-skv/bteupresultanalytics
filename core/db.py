@@ -34,9 +34,23 @@ def init_db():
             semester TEXT,
             rollno TEXT,
             source_file TEXT,
+            institute TEXT,
             UNIQUE(enrollment)
         );
-
+        
+        -- Migration for existing databases
+        BEGIN;
+        PRAGMA user_version;
+        COMMIT;
+        """)
+        
+        # Add institute column if missing
+        try:
+            conn.execute("SELECT institute FROM students LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE students ADD COLUMN institute TEXT")
+            
+        conn.executescript("""
         CREATE TABLE IF NOT EXISTS results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             enrollment TEXT NOT NULL,
@@ -65,8 +79,8 @@ def upsert_students(students: list[dict]):
     """Insert or replace student records."""
     with get_conn() as conn:
         conn.executemany("""
-            INSERT INTO students (enrollment, name, father_name, dob, branch, semester, rollno, source_file)
-            VALUES (:enrollment, :name, :father_name, :dob, :branch, :semester, :rollno, :source_file)
+            INSERT INTO students (enrollment, name, father_name, dob, branch, semester, rollno, source_file, institute)
+            VALUES (:enrollment, :name, :father_name, :dob, :branch, :semester, :rollno, :source_file, :institute)
             ON CONFLICT(enrollment) DO UPDATE SET
                 name=excluded.name,
                 father_name=excluded.father_name,
@@ -74,41 +88,61 @@ def upsert_students(students: list[dict]):
                 branch=excluded.branch,
                 semester=excluded.semester,
                 rollno=excluded.rollno,
-                source_file=excluded.source_file
+                source_file=excluded.source_file,
+                institute=excluded.institute
         """, students)
     return len(students)
 
 
-def get_all_students() -> pd.DataFrame:
+def get_all_students(institute: str = None) -> pd.DataFrame:
     with get_conn() as conn:
+        if institute:
+            return pd.read_sql("SELECT * FROM students WHERE institute=? ORDER BY branch, semester, name", conn, params=(institute,))
         return pd.read_sql("SELECT * FROM students ORDER BY branch, semester, name", conn)
 
 
-def get_branches() -> list[str]:
+def get_institutes() -> list[str]:
     with get_conn() as conn:
-        rows = conn.execute("SELECT DISTINCT branch FROM students ORDER BY branch").fetchall()
+        rows = conn.execute("SELECT DISTINCT institute FROM students WHERE institute IS NOT NULL ORDER BY institute").fetchall()
         return [r[0] for r in rows if r[0]]
 
 
-def get_semesters_for_branch(branch: str) -> list[str]:
+def get_branches(institute: str = None) -> list[str]:
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT semester FROM students WHERE branch=? ORDER BY semester", (branch,)
-        ).fetchall()
+        if institute:
+            rows = conn.execute("SELECT DISTINCT branch FROM students WHERE institute=? ORDER BY branch", (institute,)).fetchall()
+        else:
+            rows = conn.execute("SELECT DISTINCT branch FROM students ORDER BY branch").fetchall()
         return [r[0] for r in rows if r[0]]
 
 
-def get_students_for_branch(branch: str, semester: str = None) -> pd.DataFrame:
+def get_semesters_for_branch(branch: str, institute: str = None) -> list[str]:
     with get_conn() as conn:
+        if institute:
+            rows = conn.execute(
+                "SELECT DISTINCT semester FROM students WHERE branch=? AND institute=? ORDER BY semester", (branch, institute)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT DISTINCT semester FROM students WHERE branch=? ORDER BY semester", (branch,)
+            ).fetchall()
+        return [r[0] for r in rows if r[0]]
+
+
+def get_students_for_branch(branch: str, semester: str = None, institute: str = None) -> pd.DataFrame:
+    with get_conn() as conn:
+        query = "SELECT * FROM students WHERE branch=?"
+        params = [branch]
+        
         if semester:
-            return pd.read_sql(
-                "SELECT * FROM students WHERE branch=? AND semester=? ORDER BY name",
-                conn, params=(branch, semester)
-            )
-        return pd.read_sql(
-            "SELECT * FROM students WHERE branch=? ORDER BY semester, name",
-            conn, params=(branch,)
-        )
+            query += " AND semester=?"
+            params.append(semester)
+        if institute:
+            query += " AND institute=?"
+            params.append(institute)
+            
+        query += " ORDER BY semester, name"
+        return pd.read_sql(query, conn, params=params)
 
 
 def get_already_fetched_enrollments() -> set:
@@ -136,8 +170,16 @@ def insert_results(rows: list[dict]):
         """, rows)
 
 
-def get_all_results() -> pd.DataFrame:
+def get_all_results(institute: str = None) -> pd.DataFrame:
     with get_conn() as conn:
+        if institute:
+            # We join with students table to filter results by the student's nominal roll institute
+            query = """
+                SELECT r.* FROM results r
+                JOIN students s ON r.enrollment = s.enrollment
+                WHERE s.institute = ?
+            """
+            return pd.read_sql(query, conn, params=(institute,))
         return pd.read_sql("SELECT * FROM results", conn)
 
 
@@ -158,13 +200,21 @@ def clear_results():
         conn.execute("DELETE FROM results")
 
 
-def get_student_count() -> int:
+def get_student_count(institute: str = None) -> int:
     with get_conn() as conn:
+        if institute:
+            return conn.execute("SELECT COUNT(DISTINCT enrollment) FROM students WHERE institute=?", (institute,)).fetchone()[0]
         return conn.execute("SELECT COUNT(DISTINCT enrollment) FROM students").fetchone()[0]
 
 
-def get_result_count() -> int:
+def get_result_count(institute: str = None) -> int:
     with get_conn() as conn:
+        if institute:
+            return conn.execute("""
+                SELECT COUNT(DISTINCT r.enrollment) FROM results r
+                JOIN students s ON r.enrollment = s.enrollment
+                WHERE s.institute = ?
+            """, (institute,)).fetchone()[0]
         return conn.execute("SELECT COUNT(DISTINCT enrollment) FROM results").fetchone()[0]
 
 

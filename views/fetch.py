@@ -11,11 +11,12 @@ def render():
     st.markdown('<div class="section-header">🌐 Fetch Results from BTEUP Portal</div>', unsafe_allow_html=True)
     st.markdown("Select branches/semesters or search for individual students to fetch results directly from the BTEUP portal.")
 
-    student_count = get_student_count()
-    result_count  = get_result_count()
+    current_inst = st.session_state.get('current_institute')
+    student_count = get_student_count(current_inst)
+    result_count  = get_result_count(current_inst)
 
     if student_count == 0:
-        st.warning("⚠️ No students loaded yet. Please go to **📋 Nominal** page first and upload your nominal register.")
+        st.warning("⚠️ No students loaded yet for the selected institute. Please go to **📋 Nominal** page first and upload your nominal register.")
         return
 
     st.markdown(f"""
@@ -33,7 +34,7 @@ def render():
     students_to_fetch = []
     
     if fetch_mode == "By Branch / Semester":
-        branches = get_branches()
+        branches = get_branches(current_inst)
 
         st.markdown("### Select Branches and Semesters to Fetch")
 
@@ -48,7 +49,7 @@ def render():
             if selected_branches:
                 st.markdown("##### Select Semesters")
                 for b in selected_branches:
-                    sems = get_semesters_for_branch(b)
+                    sems = get_semesters_for_branch(b, current_inst)
                     branch_semesters[b] = st.multiselect(f"Semesters for {b[:40]}...", sorted(list(sems)), default=list(sems), key=f"sem_{b}")
                 
         with col2:
@@ -59,19 +60,19 @@ def render():
                 help="Clear existing results for selected branches and fetch fresh")
 
         if selected_branches:
-            # Combine students from all selected branches and semesters
-            all_dfs = []
+            st.markdown("---")
+            all_students = []
             for b in selected_branches:
-                sems = branch_semesters.get(b, [])
-                for s in sems:
-                    all_dfs.append(get_students_for_branch(b, s))
+                for s in branch_semesters[b]:
+                    df_s = get_students_for_branch(b, s, current_inst)
+                    all_students.append(df_s)
             
-            if all_dfs:
-                df = pd.concat(all_dfs).drop_duplicates(subset=["enrollment"])
+            if all_students:
+                df = pd.concat(all_students).drop_duplicates(subset=["enrollment"])
             else:
                 df = pd.DataFrame()
             
-            already_fetched = get_already_fetched_enrollments()
+            already_fetched = get_already_fetched_enrollments(current_inst)
             
             if not df.empty and skip_already_fetched and not force_refetch:
                 df = df[~df["enrollment"].isin(already_fetched)]
@@ -82,7 +83,7 @@ def render():
             
     else:
         st.markdown("### Search Individual Student")
-        all_df = get_all_students()
+        all_df = get_all_students(current_inst)
         search_q = st.text_input("Search by Name or Enrollment")
         
         if search_q:

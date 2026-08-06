@@ -8,9 +8,9 @@ def render():
     st.markdown("Upload the NOMINAL register as **Excel (.xlsx)** or **PDF** to extract student data.")
 
     # ── Current DB status ─────────────────────────────────────────────────────────
-    student_count = get_student_count()
+    student_count = get_student_count(st.session_state.get('current_institute'))
     if student_count > 0:
-        branches = get_branches()
+        branches = get_branches(st.session_state.get('current_institute'))
         st.success(f"✅ Database has **{student_count}** students across **{len(branches)}** branches.")
         branch_html = "".join(f'<span class="branch-chip">{b}</span>' for b in branches)
         st.markdown(f'<div class="info-box">{branch_html}</div>', unsafe_allow_html=True)
@@ -18,6 +18,16 @@ def render():
     st.markdown("---")
 
     # ── Upload section ────────────────────────────────────────────────────────────
+    st.markdown("### 🏢 Institute Identity")
+    institute_name = st.text_input(
+        "Enter your Institute Code & Name (e.g., 322 GOVT POLYTECHNIC BAREILLY)", 
+        help="Required. This keeps your results strictly separated from other colleges using this app."
+    )
+    
+    if not institute_name:
+        st.warning("⚠️ Please enter your Institute Name above before uploading files.")
+        return
+
     tab1, tab2 = st.tabs(["📊 Upload Excel", "📄 Upload PDF"])
 
     with tab1:
@@ -32,7 +42,7 @@ def render():
         if excel_file:
             with st.spinner("Parsing Excel file..."):
                 try:
-                    students = parse_excel(excel_file, source_label=excel_file.name)
+                    students = parse_excel(excel_file, source_label=excel_file.name, institute_name=institute_name)
                     st.success(f"✅ Found **{len(students)}** students in **{excel_file.name}**")
                     
                     if students:
@@ -76,7 +86,7 @@ def render():
         if pdf_file:
             with st.spinner("Extracting records from PDF (using advanced regex)..."):
                 try:
-                    students = parse_pdf(pdf_file, source_label=pdf_file.name)
+                    students = parse_pdf(pdf_file, source_label=pdf_file.name, institute_name=institute_name)
                     if not students:
                         st.warning("⚠️ Could not extract any student records. Make sure the PDF contains valid enrollment numbers and DOBs.")
                     else:
