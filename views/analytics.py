@@ -445,7 +445,15 @@ def render():
                                     # Fetch HTML first because BTEUP has broken SSL which weasyprint strictly enforces
                                     resp = requests.get(url, verify=False, timeout=15)
                                     if resp.status_code == 200:
-                                        pdf_data = HTML(string=resp.text, base_url="https://result.bteexam.com/").write_pdf()
+                                        html_text = resp.text
+                                        # Inject CSS to force landscape and prevent table cutting
+                                        css_injection = "<style>@page { size: A3 landscape; margin: 10mm; } table { width: 100% !important; max-width: 100% !important; } body { font-size: 12px; }</style>"
+                                        if "</head>" in html_text:
+                                            html_text = html_text.replace("</head>", f"{css_injection}</head>")
+                                        else:
+                                            html_text = css_injection + html_text
+                                            
+                                        pdf_data = HTML(string=html_text, base_url="https://result.bteexam.com/").write_pdf()
                                         if pdf_data:
                                             zf.writestr(f"{branch_clean}_{enroll}.pdf", pdf_data)
                                 except Exception:
