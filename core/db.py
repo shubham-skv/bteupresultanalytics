@@ -207,6 +207,13 @@ def clear_results():
         conn.execute("DELETE FROM results")
 
 
+def delete_institute_data(institute: str):
+    """Delete all students and results for a specific institute."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM results WHERE enrollment IN (SELECT enrollment FROM students WHERE institute=?)", (institute,))
+        conn.execute("DELETE FROM students WHERE institute=?", (institute,))
+
+
 def get_student_count(institute: str = None) -> int:
     with get_conn() as conn:
         if institute:

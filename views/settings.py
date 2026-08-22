@@ -48,5 +48,19 @@ def render():
             st.rerun()
 
     st.markdown("---")
+    st.markdown("### 🏢 Institute Management")
+    from core.db import get_institutes, delete_institute_data
+    all_insts = get_institutes()
+    if all_insts:
+        inst_to_delete = st.selectbox("Select Institute to Delete", all_insts)
+        st.warning(f"⚠️ This will delete all nominal rolls and fetched results for **{inst_to_delete}**.")
+        if st.button("🗑️ Delete Institute Data", type="primary"):
+            delete_institute_data(inst_to_delete)
+            st.success(f"✅ Data for {inst_to_delete} deleted successfully!")
+            st.rerun()
+    else:
+        st.info("No institutes found in the database.")
+
+    st.markdown("---")
     st.markdown("### 🎨 Theme & Appearance")
     st.info("The application currently uses a customized premium Light theme. To adjust colors further, modify the CSS in `app.py`.")
