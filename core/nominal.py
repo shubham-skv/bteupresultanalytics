@@ -143,6 +143,10 @@ def parse_pdf(file_obj, source_label: str = "NOMINAL.pdf", institute_name: str =
         "mechanical": "Mechanical Engineering",
         "electronics": "Electronics Engineering",
         "information": "Information Technology",
+        "chemical": "Chemical Engineering",
+        "agriculture": "Agricultural Engineering",
+        "paint": "Paint Technology",
+        "textile": "Textile Technology",
     }
     
     current_institute = institute_name or "Unknown Institute"
@@ -168,7 +172,16 @@ def parse_pdf(file_obj, source_label: str = "NOMINAL.pdf", institute_name: str =
                     if "LATERAL" in text_upper:
                         current_branch += " (Lateral)"
                     break
-                  # Detect semester
+            
+            if current_branch == "Unknown":
+                # Fallback: Look for "--- [BRANCH NAME]"
+                branch_match = re.search(r'\d{3}\s*---\s*([A-Z\s&]+?)(?:(?=\nBRANCH|\nENROLLMENT|\s*$))', text_upper)
+                if branch_match:
+                    current_branch = branch_match.group(1).strip()
+                    if "LATERAL" in text_upper:
+                        current_branch += " (Lateral)"
+
+            # Detect semester
             sem_match = re.search(r"(\d)\s*(ST|ND|RD|TH)\s*SEM", text_upper)
             if sem_match:
                 current_semester = sem_match.group(1)
