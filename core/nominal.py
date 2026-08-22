@@ -143,6 +143,8 @@ def parse_pdf(file_obj, source_label: str = "NOMINAL.pdf", institute_name: str =
         "mechanical": "Mechanical Engineering",
         "electronics": "Electronics Engineering",
         "information": "Information Technology",
+        "chemical fertilizer": "Chemical Engineering (Fertilizer)",
+        "plastic and mould": "Plastic and Mould Technology",
         "chemical": "Chemical Engineering",
         "agriculture": "Agricultural Engineering",
         "paint": "Paint Technology",

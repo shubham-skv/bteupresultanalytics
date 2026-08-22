@@ -145,9 +145,16 @@ def get_students_for_branch(branch: str, semester: str = None, institute: str = 
         return pd.read_sql(query, conn, params=params)
 
 
-def get_already_fetched_enrollments() -> set:
+def get_already_fetched_enrollments(institute: str = None) -> set:
     with get_conn() as conn:
-        rows = conn.execute("SELECT DISTINCT enrollment FROM results").fetchall()
+        if institute:
+            rows = conn.execute("""
+                SELECT DISTINCT r.enrollment FROM results r
+                JOIN students s ON r.enrollment = s.enrollment
+                WHERE s.institute = ?
+            """, (institute,)).fetchall()
+        else:
+            rows = conn.execute("SELECT DISTINCT enrollment FROM results").fetchall()
         return {r[0] for r in rows}
 
 
