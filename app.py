@@ -245,9 +245,9 @@ if st.session_state.page == "home":
 
     st.markdown("---")
     st.markdown("### 📥 Quick PDF Download")
-    st.markdown("Select a branch to instantly generate and download its complete result sheet as a PDF.")
+    st.markdown("Select a branch to instantly download a ZIP of all individual original BTEUP result PDFs for that branch.")
     try:
-        from views.analytics import load_results, build_student_summary, to_pdf_bytes
+        from views.analytics import load_results, build_student_summary
         raw_df = load_results(st.session_state.current_institute)
         if not raw_df.empty:
             student_df = build_student_summary(raw_df)
@@ -256,28 +256,59 @@ if st.session_state.page == "home":
             selected_b = st.selectbox("Select Branch", ["-- Select a branch --"] + branches, key="home_branch_dl")
             if selected_b and selected_b != "-- Select a branch --":
                 branch_students = student_df[student_df["branch"] == selected_b].copy()
-                display_b = branch_students[["enrollment","student_name","father_name","score","grand_total","status","passed"]].copy()
-                display_b["Status"] = display_b.apply(lambda row: f"✅ {row['status']}" if row["passed"] else f"❌ {row['status']}", axis=1)
-                display_b = display_b.drop(["status", "passed"], axis=1)
-                display_b.index = range(1, len(display_b)+1)
-                display_b = display_b.rename(columns={
-                    "enrollment":"Enrollment","student_name":"Name","father_name":"Father","score":"Score","grand_total":"Grand Total"
-                })
+                st.info(f"Loaded {len(branch_students)} student records for this branch.")
                 
-                st.info(f"Loaded {len(display_b)} student records for this branch.")
-                
-                pdf_bytes = to_pdf_bytes(display_b, f"Full Branch Result - {selected_b}")
-                
-                cache_key = f"pdf_home_{selected_b}"
-                if cache_key not in st.session_state:
-                    if st.button("🚀 Generate PDF (Includes Photos)", use_container_width=True):
-                        with st.spinner(f"Downloading photos and rendering PDF for {len(display_b)} students... Please wait."):
-                            st.session_state[cache_key] = to_pdf_bytes(display_b, f"Full Branch Result - {selected_b}")
-                        st.rerun()
+                zip_cache_key = f"orig_zip_home_{selected_b}"
+                if zip_cache_key not in st.session_state:
+                    if st.button("📦 Generate Original PDFs ZIP", key="gen_orig_zip_home", use_container_width=True):
+                        prog_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        import io, zipfile, base64
+                        import requests
+                        try:
+                            from weasyprint import HTML
+                            
+                            zip_buffer = io.BytesIO()
+                            total = len(branch_students)
+                            with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zf:
+                                for i, (_, row_data) in enumerate(branch_students.iterrows()):
+                                    enroll = str(row_data["enrollment"]).strip()
+                                    dob = str(row_data.get("dob", "")).strip()
+                                    branch_clean = str(row_data.get("branch", "Result")).replace("/", "_").replace(":", "")
+                                    
+                                    status_text.text(f"Downloading PDF for {enroll}... ({i+1}/{total})")
+                                    prog_bar.progress((i + 1) / total)
+                                    
+                                    enr_b64 = base64.b64encode(enroll.encode()).decode()
+                                    dob_b64 = base64.b64encode(dob.encode()).decode()
+                                    url = f"https://result.bteexam.com/even/main/oddresult.aspx?id={enr_b64}&id2={dob_b64}"
+                                    try:
+                                        resp = requests.get(url, verify=False, timeout=15)
+                                        if resp.status_code == 200:
+                                            html_text = resp.text
+                                            css_injection = "<style>@page { size: A3 landscape; margin: 10mm; } table { width: 100% !important; max-width: 100% !important; } body { font-size: 12px; }</style>"
+                                            if "</head>" in html_text:
+                                                html_text = html_text.replace("</head>", f"{css_injection}</head>")
+                                            else:
+                                                html_text = css_injection + html_text
+                                                
+                                            pdf_data = HTML(string=html_text, base_url="https://result.bteexam.com/").write_pdf()
+                                            if pdf_data:
+                                                zf.writestr(f"{branch_clean}_{enroll}.pdf", pdf_data)
+                                    except Exception:
+                                        pass
+                            
+                            status_text.empty()
+                            prog_bar.empty()
+                            st.session_state[zip_cache_key] = zip_buffer.getvalue()
+                            st.rerun()
+                        except ImportError:
+                            status_text.error("weasyprint is not installed. Please add it to requirements.txt")
                 else:
-                    file_prefix = f"Branch_{selected_b}".replace(' ', '_').replace('/', '_').replace('[', '').replace(']', '')
-                    st.success("PDF generated successfully!")
-                    st.download_button("📥 Click here to Download PDF", data=st.session_state[cache_key], file_name=f"{file_prefix}.pdf", mime="application/pdf", use_container_width=True, type="primary")
+                    file_prefix = f"Original_Results_{selected_b}".replace(' ', '_').replace('/', '_').replace('[', '').replace(']', '')
+                    st.success("Original PDFs ZIP generated successfully!")
+                    st.download_button("📥 Click here to Download ZIP", data=st.session_state[zip_cache_key], file_name=f"{file_prefix}.zip", mime="application/zip", use_container_width=True, type="primary")
         else:
             st.info("No result data found yet. Fetch results first!")
     except Exception as e:
