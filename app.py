@@ -267,7 +267,7 @@ if st.session_state.page == "home":
                         import io, zipfile, base64
                         import requests
                         try:
-                            from weasyprint import HTML
+                            from views.analytics import html_to_pdf_bytes
                             
                             zip_buffer = io.BytesIO()
                             total = len(branch_students)
@@ -293,7 +293,7 @@ if st.session_state.page == "home":
                                             else:
                                                 html_text = css_injection + html_text
                                                 
-                                            pdf_data = HTML(string=html_text, base_url="https://result.bteexam.com/").write_pdf()
+                                            pdf_data = html_to_pdf_bytes(html_text)
                                             if pdf_data:
                                                 zf.writestr(f"{branch_clean}_{enroll}.pdf", pdf_data)
                                     except Exception:
@@ -304,7 +304,7 @@ if st.session_state.page == "home":
                             st.session_state[zip_cache_key] = zip_buffer.getvalue()
                             st.rerun()
                         except ImportError:
-                            status_text.error("weasyprint is not installed. Please add it to requirements.txt")
+                            status_text.error("Neither weasyprint nor playwright is installed.")
                 else:
                     file_prefix = f"Original_Results_{selected_b}".replace(' ', '_').replace('/', '_').replace('[', '').replace(']', '')
                     st.success("Original PDFs ZIP generated successfully!")

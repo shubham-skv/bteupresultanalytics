@@ -56,6 +56,27 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
         df.to_excel(writer, index=False)
     return buf.getvalue()
 
+def html_to_pdf_bytes(html_text: str) -> bytes:
+    try:
+        from weasyprint import HTML
+        return HTML(string=html_text, base_url="https://result.bteexam.com/").write_pdf()
+    except Exception:
+        pass
+    
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.set_content(html_text)
+            pdf_data = page.pdf(format="A3", landscape=True, print_background=True)
+            browser.close()
+            return pdf_data
+    except Exception as e:
+        import streamlit as st
+        st.error(f"PDF Generation failed: {str(e)}")
+        return None
+
 def to_pdf_bytes(df: pd.DataFrame, title: str = "Report") -> bytes:
     try:
         from fpdf import FPDF
@@ -442,7 +463,6 @@ def render():
                                 dob_b64 = base64.b64encode(dob.encode()).decode()
                                 url = f"https://result.bteexam.com/even/main/oddresult.aspx?id={enr_b64}&id2={dob_b64}"
                                 try:
-                                    # Fetch HTML first because BTEUP has broken SSL which weasyprint strictly enforces
                                     resp = requests.get(url, verify=False, timeout=15)
                                     if resp.status_code == 200:
                                         html_text = resp.text
@@ -453,7 +473,7 @@ def render():
                                         else:
                                             html_text = css_injection + html_text
                                             
-                                        pdf_data = HTML(string=html_text, base_url="https://result.bteexam.com/").write_pdf()
+                                        pdf_data = html_to_pdf_bytes(html_text)
                                         if pdf_data:
                                             zf.writestr(f"{branch_clean}_{enroll}.pdf", pdf_data)
                                 except Exception:
