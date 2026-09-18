@@ -235,6 +235,8 @@ def render_download_buttons(df: pd.DataFrame, prefix: str):
     with col1:
         st.download_button(f"📥 CSV", data=df.to_csv(index=False).encode("utf-8"), file_name=f"{file_prefix}.csv", mime="text/csv", use_container_width=True, key=f"dl_csv_{file_prefix}")
     with col2:
+        st.download_button(f"📥 Excel", data=to_excel_bytes(df), file_name=f"{file_prefix}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"dl_xl_{file_prefix}")
+    with col3:
         cache_key = f"pdf_bytes_{file_prefix}"
         if cache_key not in st.session_state:
             if st.button("🚀 Prepare PDF", key=f"prep_pdf_{file_prefix}", use_container_width=True):

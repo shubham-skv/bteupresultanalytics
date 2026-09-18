@@ -259,10 +259,24 @@ if st.session_state.page == "home":
                 st.info(f"Loaded {len(branch_students)} student records for this branch.")
                 
                 zip_cache_key = f"orig_zip_home_{selected_b}"
-                if zip_cache_key not in st.session_state:
-                    if st.button("📦 Generate Original PDFs ZIP", key="gen_orig_zip_home", use_container_width=True):
-                        prog_bar = st.progress(0)
-                        status_text = st.empty()
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    from views.analytics import to_excel_bytes
+                    display_xl = branch_students[["enrollment","student_name","father_name","score","grand_total","status","passed"]].copy()
+                    display_xl["Status"] = display_xl.apply(lambda row: f"✅ {row['status']}" if row["passed"] else f"❌ {row['status']}", axis=1)
+                    display_xl = display_xl.drop(["status", "passed"], axis=1)
+                    display_xl.index = range(1, len(display_xl)+1)
+                    display_xl = display_xl.rename(columns={"enrollment":"Enrollment","student_name":"Name","father_name":"Father","score":"Score","grand_total":"Grand Total"})
+                    file_prefix = f"Branch_{selected_b}".replace(' ', '_').replace('/', '_').replace('[', '').replace(']', '')
+                    st.download_button("📊 Download as Excel", data=to_excel_bytes(display_xl), file_name=f"{file_prefix}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                
+                with col2:
+                    if zip_cache_key not in st.session_state:
+                        if st.button("📦 Generate Original PDFs ZIP", key="gen_orig_zip_home", use_container_width=True):
+                            prog_bar = st.progress(0)
+                            status_text = st.empty()
                         
                         import io, zipfile, base64
                         import requests
