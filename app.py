@@ -277,52 +277,52 @@ if st.session_state.page == "home":
                         if st.button("📦 Generate Original PDFs ZIP", key="gen_orig_zip_home", use_container_width=True):
                             prog_bar = st.progress(0)
                             status_text = st.empty()
-                        
-                        import io, zipfile, base64
-                        import requests
-                        try:
-                            from views.analytics import html_to_pdf_bytes
                             
-                            zip_buffer = io.BytesIO()
-                            total = len(branch_students)
-                            with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zf:
-                                for i, (_, row_data) in enumerate(branch_students.iterrows()):
-                                    enroll = str(row_data["enrollment"]).strip()
-                                    dob = str(row_data.get("dob", "")).strip()
-                                    branch_clean = str(row_data.get("branch", "Result")).replace("/", "_").replace(":", "")
-                                    
-                                    status_text.text(f"Downloading PDF for {enroll}... ({i+1}/{total})")
-                                    prog_bar.progress((i + 1) / total)
-                                    
-                                    enr_b64 = base64.b64encode(enroll.encode()).decode()
-                                    dob_b64 = base64.b64encode(dob.encode()).decode()
-                                    url = f"https://result.bteexam.com/even/main/oddresult.aspx?id={enr_b64}&id2={dob_b64}"
-                                    try:
-                                        resp = requests.get(url, verify=False, timeout=15)
-                                        if resp.status_code == 200:
-                                            html_text = resp.text
-                                            css_injection = "<style>@page { size: A3 landscape; margin: 10mm; } table { width: 100% !important; max-width: 100% !important; } body { font-size: 12px; }</style>"
-                                            if "</head>" in html_text:
-                                                html_text = html_text.replace("</head>", f"{css_injection}</head>")
-                                            else:
-                                                html_text = css_injection + html_text
-                                                
-                                            pdf_data = html_to_pdf_bytes(html_text)
-                                            if pdf_data:
-                                                zf.writestr(f"{branch_clean}_{enroll}.pdf", pdf_data)
-                                    except Exception:
-                                        pass
-                            
-                            status_text.empty()
-                            prog_bar.empty()
-                            st.session_state[zip_cache_key] = zip_buffer.getvalue()
-                            st.rerun()
-                        except ImportError:
-                            status_text.error("Neither weasyprint nor playwright is installed.")
-                else:
-                    file_prefix = f"Original_Results_{selected_b}".replace(' ', '_').replace('/', '_').replace('[', '').replace(']', '')
-                    st.success("Original PDFs ZIP generated successfully!")
-                    st.download_button("📥 Click here to Download ZIP", data=st.session_state[zip_cache_key], file_name=f"{file_prefix}.zip", mime="application/zip", use_container_width=True, type="primary")
+                            import io, zipfile, base64
+                            import requests
+                            try:
+                                from views.analytics import html_to_pdf_bytes
+                                
+                                zip_buffer = io.BytesIO()
+                                total = len(branch_students)
+                                with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zf:
+                                    for i, (_, row_data) in enumerate(branch_students.iterrows()):
+                                        enroll = str(row_data["enrollment"]).strip()
+                                        dob = str(row_data.get("dob", "")).strip()
+                                        branch_clean = str(row_data.get("branch", "Result")).replace("/", "_").replace(":", "")
+                                        
+                                        status_text.text(f"Downloading PDF for {enroll}... ({i+1}/{total})")
+                                        prog_bar.progress((i + 1) / total)
+                                        
+                                        enr_b64 = base64.b64encode(enroll.encode()).decode()
+                                        dob_b64 = base64.b64encode(dob.encode()).decode()
+                                        url = f"https://result.bteexam.com/even/main/oddresult.aspx?id={enr_b64}&id2={dob_b64}"
+                                        try:
+                                            resp = requests.get(url, verify=False, timeout=15)
+                                            if resp.status_code == 200:
+                                                html_text = resp.text
+                                                css_injection = "<style>@page { size: A3 landscape; margin: 10mm; } table { width: 100% !important; max-width: 100% !important; } body { font-size: 12px; }</style>"
+                                                if "</head>" in html_text:
+                                                    html_text = html_text.replace("</head>", f"{css_injection}</head>")
+                                                else:
+                                                    html_text = css_injection + html_text
+                                                    
+                                                pdf_data = html_to_pdf_bytes(html_text)
+                                                if pdf_data:
+                                                    zf.writestr(f"{branch_clean}_{enroll}.pdf", pdf_data)
+                                        except Exception:
+                                            pass
+                                
+                                status_text.empty()
+                                prog_bar.empty()
+                                st.session_state[zip_cache_key] = zip_buffer.getvalue()
+                                st.rerun()
+                            except ImportError:
+                                status_text.error("Neither weasyprint nor playwright is installed.")
+                    else:
+                        file_prefix = f"Original_Results_{selected_b}".replace(' ', '_').replace('/', '_').replace('[', '').replace(']', '')
+                        st.success("Original PDFs ZIP generated successfully!")
+                        st.download_button("📥 Click here to Download ZIP", data=st.session_state[zip_cache_key], file_name=f"{file_prefix}.zip", mime="application/zip", use_container_width=True, type="primary")
         else:
             st.info("No result data found yet. Fetch results first!")
     except Exception as e:
