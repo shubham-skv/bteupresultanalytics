@@ -374,50 +374,58 @@ def render():
 
     raw_orig = load_results(current_inst)
     reval_df = get_all_reval_results(current_inst)
-    has_reval = not reval_df.empty and (reval_df["status"] == "FOUND").any()
+    if reval_df.empty:
+        reval_df = get_all_reval_results(None) # Fallback to all reval records
+        
+    found_reval_rows = reval_df[reval_df["status"] == "FOUND"] if not reval_df.empty else pd.DataFrame()
+    found_count = len(found_reval_rows)
+    found_students_count = found_reval_rows["enrollment"].nunique() if found_count > 0 else 0
 
     # Session state for reval toggle
     if "apply_reval_analytics" not in st.session_state:
         st.session_state.apply_reval_analytics = False
 
-    # REVAL Controls Box
-    apply_reval = False
-    if has_reval:
-        found_reval_rows = reval_df[reval_df["status"] == "FOUND"]
-        found_students_count = found_reval_rows["enrollment"].nunique()
-
-        st.markdown("""
-        <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:12px; padding:1rem 1.25rem; margin-bottom:1rem;">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <div>
-              <span style="font-weight:700; font-size:1.1rem; color:#0f172a;">🔄 REVAL Marks Simulation & Year Back Rule</span>
-              <p style="margin:2px 0 0 0; font-size:0.85rem; color:#64748b;">
-                BTEUP Rule: <b>&lt; 5 Backs = Promoted</b> | <b>&ge; 5 Backs = Year Back</b>. Toggle below to apply Re-Evaluation marks across all analytics!
-              </p>
-            </div>
-          </div>
+    # REVAL Controls Box - ALWAYS VISIBLE
+    st.markdown("""
+    <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:12px; padding:1.1rem 1.25rem; margin-bottom:1rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <span style="font-weight:700; font-size:1.15rem; color:#0f172a;">🔄 REVAL Marks Simulation & Year Back Rule</span>
+          <p style="margin:3px 0 0 0; font-size:0.85rem; color:#64748b;">
+            Official BTEUP Rule: <b>&lt; 5 Backs = Promoted to Next Year</b> &nbsp;|&nbsp; <b>&ge; 5 Backs = Year Back (Fail)</b>
+          </p>
         </div>
-        """, unsafe_allow_html=True)
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-        ctrl1, ctrl2, ctrl3 = st.columns([3, 2, 2])
-        with ctrl1:
-            apply_reval = st.toggle(
-                "✨ Apply REVAL Marks to Dashboard",
-                value=st.session_state.apply_reval_analytics,
-                key="analytics_reval_toggle",
-                help="Applies declared Re-Evaluation marks to student theory subjects and recalculates Year Backs & Promoted status."
-            )
-            st.session_state.apply_reval_analytics = apply_reval
+    ctrl1, ctrl2, ctrl3 = st.columns([3, 2, 2])
+    with ctrl1:
+        apply_reval = st.toggle(
+            "✨ Apply REVAL Marks to Dashboard",
+            value=st.session_state.apply_reval_analytics,
+            key="analytics_reval_toggle",
+            help="Applies declared Re-Evaluation marks to student theory subjects and recalculates Year Backs & Promoted status."
+        )
+        st.session_state.apply_reval_analytics = apply_reval
+    
+    with ctrl2:
+        if found_count > 0:
+            st.markdown(f"**{found_students_count} Students** ({found_count} Subjects) in REVAL DB")
+        else:
+            st.info("ℹ️ No REVAL marks found in DB yet.")
         
-        with ctrl2:
-            st.markdown(f"**{found_students_count} Students** ({len(found_reval_rows)} Subjects) in REVAL DB")
-            
-        with ctrl3:
-            if st.button("💾 Permanently Save to DB", help="Permanently overwrite the results table in SQLite with declared REVAL marks."):
+    with ctrl3:
+        if found_count > 0:
+            if st.button("💾 Permanently Save to DB", help="Permanently overwrite the results table in SQLite with declared REVAL marks.", use_container_width=True):
                 from core.db import apply_reval_to_results
                 updated_db = apply_reval_to_results(current_inst)
                 st.success(f"✅ Successfully updated {updated_db} subject marks permanently in database!")
                 st.cache_data.clear()
+                st.rerun()
+        else:
+            if st.button("🔍 Go to REVAL Downloader", use_container_width=True):
+                st.session_state.page = "reval"
                 st.rerun()
 
     if apply_reval:

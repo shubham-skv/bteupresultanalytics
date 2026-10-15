@@ -321,10 +321,12 @@ def get_all_reval_results(institute: str = None) -> pd.DataFrame:
                     r.fetched_at
                 FROM reval_results r
                 LEFT JOIN students s ON r.enrollment = s.enrollment
-                WHERE (r.institute = ? OR s.institute = ?)
+                WHERE (r.institute = ? OR s.institute = ? OR (r.institute IS NULL AND s.institute IS NULL))
                 ORDER BY branch, student_name, qp_no
             """
-            return pd.read_sql(query, conn, params=(institute, institute))
+            res = pd.read_sql(query, conn, params=(institute, institute))
+            if not res.empty:
+                return res
         
         query = """
             SELECT 
