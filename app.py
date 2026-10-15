@@ -155,9 +155,15 @@ with st.sidebar:
         
     student_count = get_student_count(st.session_state.current_institute)
     result_count  = get_result_count(st.session_state.current_institute)
+    from core.db import get_reval_count
+    reval_count   = get_reval_count(st.session_state.current_institute)
     
-    st.metric("Students in DB", student_count)
-    st.metric("Results Fetched", result_count)
+    m_col1, m_col2 = st.columns(2)
+    with m_col1:
+        st.metric("Students", student_count)
+    with m_col2:
+        st.metric("Results", result_count)
+    st.metric("REVAL Checked", reval_count)
     st.markdown("---")
     
     st.markdown("**Navigation**")
@@ -172,6 +178,7 @@ with st.sidebar:
     nav_button("Home", "home", "🏠")
     nav_button("Upload Nominal", "nominal", "📋")
     nav_button("Fetch Results", "fetch", "🌐")
+    nav_button("REVAL Result Downloader", "reval", "🔍")
     nav_button("Analytics", "analytics", "📊")
     nav_button("Settings & Data", "settings", "⚙️")
 
@@ -332,6 +339,9 @@ elif st.session_state.page == "nominal":
     nominal.render()
 elif st.session_state.page == "fetch":
     fetch.render()
+elif st.session_state.page == "reval":
+    import views.reval as reval
+    reval.render()
 elif st.session_state.page == "analytics":
     analytics.render()
 elif st.session_state.page == "settings":

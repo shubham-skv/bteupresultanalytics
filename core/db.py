@@ -72,6 +72,27 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_results_enrollment ON results(enrollment);
         CREATE INDEX IF NOT EXISTS idx_results_branch ON results(branch);
         CREATE INDEX IF NOT EXISTS idx_results_paper ON results(paper_name);
+
+        CREATE TABLE IF NOT EXISTS reval_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            enrollment TEXT NOT NULL,
+            dob TEXT,
+            roll_no TEXT,
+            institute TEXT,
+            student_name TEXT,
+            branch TEXT,
+            qp_no TEXT,
+            paper_name TEXT,
+            reval_marks TEXT,
+            remarks TEXT,
+            status TEXT DEFAULT 'FOUND',
+            fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_reval_enrollment ON reval_results(enrollment);
+        CREATE INDEX IF NOT EXISTS idx_reval_institute ON reval_results(institute);
+        CREATE INDEX IF NOT EXISTS idx_reval_branch ON reval_results(branch);
+        CREATE INDEX IF NOT EXISTS idx_reval_status ON reval_results(status);
         """)
 
 
@@ -208,8 +229,9 @@ def clear_results():
 
 
 def delete_institute_data(institute: str):
-    """Delete all students and results for a specific institute."""
+    """Delete all students, results, and reval results for a specific institute."""
     with get_conn() as conn:
+        conn.execute("DELETE FROM reval_results WHERE enrollment IN (SELECT enrollment FROM students WHERE institute=?) OR institute=?", (institute, institute))
         conn.execute("DELETE FROM results WHERE enrollment IN (SELECT enrollment FROM students WHERE institute=?)", (institute,))
         conn.execute("DELETE FROM students WHERE institute=?", (institute,))
 
@@ -232,5 +254,200 @@ def get_result_count(institute: str = None) -> int:
         return conn.execute("SELECT COUNT(DISTINCT enrollment) FROM results").fetchone()[0]
 
 
+def insert_reval_results(rows: list[dict]):
+    """Insert or replace reval result rows. Deletes existing first to prevent dups."""
+    if not rows:
+        return
+    enrollments = list({r['enrollment'] for r in rows})
+    with get_conn() as conn:
+        placeholders = ",".join("?" * len(enrollments))
+        conn.execute(f"DELETE FROM reval_results WHERE enrollment IN ({placeholders})", enrollments)
+        
+        # Enforce institute, student_name, branch, roll_no from students table if missing
+        st_map = {}
+        st_rows = conn.execute(
+            f"SELECT enrollment, name, branch, institute, rollno, dob FROM students WHERE enrollment IN ({placeholders})",
+            enrollments
+        ).fetchall()
+        for sr in st_rows:
+            st_map[sr["enrollment"]] = dict(sr)
+
+        enriched_rows = []
+        for r in rows:
+            enr = r["enrollment"]
+            sinfo = st_map.get(enr, {})
+            enriched_rows.append({
+                "enrollment": enr,
+                "dob": r.get("dob") or sinfo.get("dob", ""),
+                "roll_no": r.get("roll_no") or sinfo.get("rollno", ""),
+                "institute": r.get("institute") or sinfo.get("institute", ""),
+                "student_name": r.get("student_name") or sinfo.get("name", ""),
+                "branch": r.get("branch") or sinfo.get("branch", ""),
+                "qp_no": str(r.get("qp_no", "")).strip(),
+                "paper_name": str(r.get("paper_name", "")).strip(),
+                "reval_marks": str(r.get("reval_marks", "")).strip(),
+                "remarks": str(r.get("remarks", "")).strip(),
+                "status": str(r.get("status", "FOUND")).strip(),
+            })
+
+        conn.executemany("""
+            INSERT INTO reval_results
+                (enrollment, dob, roll_no, institute, student_name, branch, qp_no,
+                 paper_name, reval_marks, remarks, status)
+            VALUES
+                (:enrollment, :dob, :roll_no, :institute, :student_name, :branch, :qp_no,
+                 :paper_name, :reval_marks, :remarks, :status)
+        """, enriched_rows)
+
+
+def get_all_reval_results(institute: str = None) -> pd.DataFrame:
+    """Fetch all reval results, joining student metadata where possible."""
+    with get_conn() as conn:
+        if institute:
+            query = """
+                SELECT 
+                    r.id,
+                    r.enrollment,
+                    COALESCE(NULLIF(r.dob, ''), s.dob) AS dob,
+                    COALESCE(NULLIF(r.roll_no, ''), s.rollno) AS roll_no,
+                    COALESCE(NULLIF(r.institute, ''), s.institute) AS institute,
+                    COALESCE(NULLIF(r.student_name, ''), s.name) AS student_name,
+                    COALESCE(NULLIF(r.branch, ''), s.branch) AS branch,
+                    r.qp_no,
+                    r.paper_name,
+                    r.reval_marks,
+                    r.remarks,
+                    r.status,
+                    r.fetched_at
+                FROM reval_results r
+                LEFT JOIN students s ON r.enrollment = s.enrollment
+                WHERE (r.institute = ? OR s.institute = ?)
+                ORDER BY branch, student_name, qp_no
+            """
+            return pd.read_sql(query, conn, params=(institute, institute))
+        
+        query = """
+            SELECT 
+                r.id,
+                r.enrollment,
+                COALESCE(NULLIF(r.dob, ''), s.dob) AS dob,
+                COALESCE(NULLIF(r.roll_no, ''), s.rollno) AS roll_no,
+                COALESCE(NULLIF(r.institute, ''), s.institute) AS institute,
+                COALESCE(NULLIF(r.student_name, ''), s.name) AS student_name,
+                COALESCE(NULLIF(r.branch, ''), s.branch) AS branch,
+                r.qp_no,
+                r.paper_name,
+                r.reval_marks,
+                r.remarks,
+                r.status,
+                r.fetched_at
+            FROM reval_results r
+            LEFT JOIN students s ON r.enrollment = s.enrollment
+            ORDER BY branch, student_name, qp_no
+        """
+        return pd.read_sql(query, conn)
+
+
+def get_already_checked_reval_enrollments(institute: str = None) -> set:
+    with get_conn() as conn:
+        if institute:
+            rows = conn.execute("""
+                SELECT DISTINCT r.enrollment FROM reval_results r
+                LEFT JOIN students s ON r.enrollment = s.enrollment
+                WHERE (r.institute = ? OR s.institute = ?)
+            """, (institute, institute)).fetchall()
+        else:
+            rows = conn.execute("SELECT DISTINCT enrollment FROM reval_results").fetchall()
+        return {r[0] for r in rows if r[0]}
+
+
+def get_reval_count(institute: str = None) -> int:
+    with get_conn() as conn:
+        if institute:
+            return conn.execute("""
+                SELECT COUNT(DISTINCT r.enrollment) FROM reval_results r
+                LEFT JOIN students s ON r.enrollment = s.enrollment
+                WHERE (r.institute = ? OR s.institute = ?)
+            """, (institute, institute)).fetchone()[0]
+        return conn.execute("SELECT COUNT(DISTINCT enrollment) FROM reval_results").fetchone()[0]
+
+
+def get_reval_stats(institute: str = None) -> dict:
+    with get_conn() as conn:
+        if institute:
+            total = conn.execute("""
+                SELECT COUNT(DISTINCT r.enrollment) FROM reval_results r
+                LEFT JOIN students s ON r.enrollment = s.enrollment
+                WHERE (r.institute = ? OR s.institute = ?)
+            """, (institute, institute)).fetchone()[0]
+            found = conn.execute("""
+                SELECT COUNT(DISTINCT r.enrollment) FROM reval_results r
+                LEFT JOIN students s ON r.enrollment = s.enrollment
+                WHERE (r.institute = ? OR s.institute = ?) AND r.status = 'FOUND'
+            """, (institute, institute)).fetchone()[0]
+            not_found = conn.execute("""
+                SELECT COUNT(DISTINCT r.enrollment) FROM reval_results r
+                LEFT JOIN students s ON r.enrollment = s.enrollment
+                WHERE (r.institute = ? OR s.institute = ?) AND r.status != 'FOUND'
+            """, (institute, institute)).fetchone()[0]
+            subjects = conn.execute("""
+                SELECT COUNT(*) FROM reval_results r
+                LEFT JOIN students s ON r.enrollment = s.enrollment
+                WHERE (r.institute = ? OR s.institute = ?) AND r.status = 'FOUND'
+            """, (institute, institute)).fetchone()[0]
+        else:
+            total = conn.execute("SELECT COUNT(DISTINCT enrollment) FROM reval_results").fetchone()[0]
+            found = conn.execute("SELECT COUNT(DISTINCT enrollment) FROM reval_results WHERE status = 'FOUND'").fetchone()[0]
+            not_found = conn.execute("SELECT COUNT(DISTINCT enrollment) FROM reval_results WHERE status != 'FOUND'").fetchone()[0]
+            subjects = conn.execute("SELECT COUNT(*) FROM reval_results WHERE status = 'FOUND'").fetchone()[0]
+
+        return {
+            "total_checked": total,
+            "found": found,
+            "not_found": not_found,
+            "subjects_found": subjects
+        }
+
+
+def clear_reval_results(institute: str = None):
+    with get_conn() as conn:
+        if institute:
+            conn.execute("""
+                DELETE FROM reval_results WHERE enrollment IN (
+                    SELECT enrollment FROM students WHERE institute = ?
+                ) OR institute = ?
+            """, (institute, institute))
+        else:
+            conn.execute("DELETE FROM reval_results")
+
+
+def get_failed_students(institute: str = None, branch: str = None) -> pd.DataFrame:
+    """
+    Get students who failed or had back papers in any theory subject.
+    Useful for targeting REVAL checks!
+    """
+    with get_conn() as conn:
+        query = """
+            SELECT DISTINCT s.enrollment, s.name, s.father_name, s.dob, s.branch, s.semester, s.rollno, s.institute
+            FROM students s
+            JOIN results r ON s.enrollment = r.enrollment
+            WHERE (
+                CAST(r.marks_obtained AS INTEGER) < CAST(r.min_marks AS INTEGER)
+                AND CAST(r.min_marks AS INTEGER) > 0
+                AND UPPER(r.paper_name) NOT LIKE '%CARRY OVER%'
+            )
+        """
+        params = []
+        if institute:
+            query += " AND s.institute = ?"
+            params.append(institute)
+        if branch:
+            query += " AND s.branch = ?"
+            params.append(branch)
+        query += " ORDER BY s.branch, s.name"
+        return pd.read_sql(query, conn, params=params)
+
+
 # Initialise on import
 init_db()
+
