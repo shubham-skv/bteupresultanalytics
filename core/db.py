@@ -448,6 +448,42 @@ def get_failed_students(institute: str = None, branch: str = None) -> pd.DataFra
         return pd.read_sql(query, conn, params=params)
 
 
+def apply_reval_to_results(institute: str = None) -> int:
+    """
+    Permanently updates the marks_obtained in the results table
+    with the re-evaluation marks from reval_results.
+    Returns the number of updated records.
+    """
+    with get_conn() as conn:
+        query = """
+            SELECT r.enrollment, r.paper_name, r.reval_marks
+            FROM reval_results r
+            WHERE r.status = 'FOUND'
+        """
+        params = []
+        if institute:
+            query += " AND (r.institute = ? OR r.enrollment IN (SELECT enrollment FROM students WHERE institute = ?))"
+            params.extend([institute, institute])
+            
+        rows = conn.execute(query, params).fetchall()
+        updated_count = 0
+        for enr, pname, rev_m in rows:
+            rev_str = str(rev_m).strip()
+            if rev_str.isdigit():
+                p_clean = pname.strip()
+                res = conn.execute("""
+                    UPDATE results
+                    SET marks_obtained = ?
+                    WHERE enrollment = ?
+                      AND (UPPER(paper_name) = UPPER(?) 
+                           OR UPPER(paper_name) = UPPER(?) 
+                           OR UPPER(paper_name) = UPPER(?))
+                      AND (CAST(max_marks AS INTEGER) >= 50 OR CAST(min_marks AS INTEGER) >= 17)
+                """, (rev_str, enr, p_clean, p_clean.replace('-', ' - '), p_clean.replace(' - ', '-')))
+                updated_count += res.rowcount
+        return updated_count
+
+
 # Initialise on import
 init_db()
 

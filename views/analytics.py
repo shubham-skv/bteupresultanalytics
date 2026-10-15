@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import io
 
-from core.db import get_all_results, get_result_count
+from core.db import get_all_results, get_result_count, get_all_reval_results, apply_reval_to_results
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def parse_grand_total(grand_total: str):
@@ -251,7 +251,7 @@ def check_pass(r):
     mo = r["marks_obtained_int"]
     mi = r["min_marks_int"]
     mx = r["max_marks_int"]
-    paper = str(r["paper_name"]).upper()
+    paper = str(r.get("paper_name", "")).upper()
     
     if "CARRY OVER" in paper:
         return True # no pass/fail for carry over
@@ -261,6 +261,48 @@ def check_pass(r):
         return mo >= (mx * 0.5)
     return True # default to pass if no specific rules apply and min_marks is 0
 
+
+def apply_reval_marks_to_df(raw_df: pd.DataFrame, reval_df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """
+    Simulate updating raw_df with declared REVAL marks from reval_df.
+    Returns (updated_raw_df, updated_subjects_count).
+    """
+    if reval_df.empty:
+        return raw_df, 0
+        
+    found_reval = reval_df[reval_df["status"] == "FOUND"].copy()
+    if found_reval.empty:
+        return raw_df, 0
+
+    df = raw_df.copy()
+    df["is_reval_updated"] = False
+    df["orig_marks_before_reval"] = df["marks_obtained"]
+
+    updated_count = 0
+    for _, r in found_reval.iterrows():
+        enr = str(r["enrollment"]).strip().upper()
+        pname = str(r.get("paper_name", "")).strip().upper()
+        rev_m = str(r.get("reval_marks", "")).strip()
+
+        if rev_m.isdigit():
+            rev_val = int(rev_m)
+            # Match theory subject in df
+            mask = (df["enrollment"].str.upper() == enr) & (
+                (df["paper_name"].str.upper() == pname) |
+                (df["paper_name"].str.upper() == pname.replace('-', ' - ')) |
+                (df["paper_name"].str.upper() == pname.replace(' - ', '-'))
+            ) & (df["max_marks_int"] >= 50)
+
+            if mask.any():
+                df.loc[mask, "marks_obtained_int"] = rev_val
+                df.loc[mask, "marks_obtained"] = rev_m
+                df.loc[mask, "is_reval_updated"] = True
+                updated_count += 1
+
+    df["is_pass_subject"] = df.apply(check_pass, axis=1)
+    return df, updated_count
+
+
 @st.cache_data(ttl=30)
 def load_results(institute: str = None):
     df = get_all_results(institute)
@@ -269,25 +311,57 @@ def load_results(institute: str = None):
     df["max_marks_int"]      = df["max_marks"].apply(marks_int)
     df["min_marks_int"]      = df["min_marks"].apply(marks_int)
     df["is_pass_subject"]    = df.apply(check_pass, axis=1)
-    df["subject_display"] = df["paper_code"] + " - " + df["paper_name"]
+    df["subject_display"]    = df["paper_code"] + " - " + df["paper_name"]
+    df["is_reval_updated"]   = False
     return df
+
 
 @st.cache_data(ttl=30)
 def build_student_summary(df: pd.DataFrame) -> pd.DataFrame:
+    # Identify back papers per student (excluding Carry Over)
+    failed_rows = df[~df["is_pass_subject"] & ~df["paper_name"].str.upper().str.contains("CARRY OVER", na=False)]
+    
+    backs_per_student = failed_rows.groupby("enrollment").agg(
+        back_count=("paper_name", "count"),
+        back_papers=("paper_name", lambda s: ", ".join(dict.fromkeys(s)))
+    ).reset_index()
+
     summary = df.groupby(["enrollment", "student_name", "father_name", "branch", "grand_total", "dob"]).agg(
         subjects_attempted=("paper_name", "count"),
         total_obtained=("marks_obtained_int", "sum"),
     ).reset_index()
     
     parsed = summary["grand_total"].apply(lambda x: pd.Series(parse_grand_total(x)))
-    parsed.columns = ["score", "max_score", "percentage", "status"]
+    parsed.columns = ["score", "max_score", "percentage", "raw_status"]
     
     summary = pd.concat([summary, parsed], axis=1)
-    summary["passed"] = summary["status"].apply(is_pass)
-    summary["clear_pass"] = summary["status"].apply(is_clear_pass)
+    
+    # Merge back paper count
+    summary = summary.merge(backs_per_student, on="enrollment", how="left")
+    summary["back_count"] = summary["back_count"].fillna(0).astype(int)
+    summary["back_papers"] = summary["back_papers"].fillna("None")
+
+    # BTEUP Promotion & Year Back Rules:
+    # 0 backs -> Clear Pass
+    # 1 to 4 backs -> Promoted with Back (Less than 5 backs)
+    # 5 or more backs -> Year Back!
+    def determine_status(r):
+        bc = int(r["back_count"])
+        if bc == 0:
+            return "PASSED (CLEAR)"
+        elif bc < 5:
+            return f"PROMOTED WITH {bc} BACK(S)"
+        else:
+            return f"YEAR BACK ({bc} BACKS)"
+
+    summary["status"] = summary.apply(determine_status, axis=1)
+    summary["clear_pass"] = summary["back_count"] == 0
+    summary["passed"] = summary["back_count"] < 5      # Promoted if < 5 backs!
+    summary["year_back"] = summary["back_count"] >= 5  # Year Back if >= 5 backs!
     summary["year"] = summary["branch"].apply(extract_year)
     
     return summary.sort_values("percentage", ascending=False).reset_index(drop=True)
+
 
 def render():
     st.markdown('<div class="section-header">📊 Analytics Dashboard</div>', unsafe_allow_html=True)
@@ -298,14 +372,105 @@ def render():
         st.warning("⚠️ No results in database yet for the selected institute. Please go to **🌐 Fetch Results** to download results first.")
         return
 
-    raw_df = load_results(current_inst)
-    student_df = build_student_summary(raw_df)
+    raw_orig = load_results(current_inst)
+    reval_df = get_all_reval_results(current_inst)
+    has_reval = not reval_df.empty and (reval_df["status"] == "FOUND").any()
+
+    # Session state for reval toggle
+    if "apply_reval_analytics" not in st.session_state:
+        st.session_state.apply_reval_analytics = False
+
+    # REVAL Controls Box
+    apply_reval = False
+    if has_reval:
+        found_reval_rows = reval_df[reval_df["status"] == "FOUND"]
+        found_students_count = found_reval_rows["enrollment"].nunique()
+
+        st.markdown("""
+        <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:12px; padding:1rem 1.25rem; margin-bottom:1rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <span style="font-weight:700; font-size:1.1rem; color:#0f172a;">🔄 REVAL Marks Simulation & Year Back Rule</span>
+              <p style="margin:2px 0 0 0; font-size:0.85rem; color:#64748b;">
+                BTEUP Rule: <b>&lt; 5 Backs = Promoted</b> | <b>&ge; 5 Backs = Year Back</b>. Toggle below to apply Re-Evaluation marks across all analytics!
+              </p>
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        ctrl1, ctrl2, ctrl3 = st.columns([3, 2, 2])
+        with ctrl1:
+            apply_reval = st.toggle(
+                "✨ Apply REVAL Marks to Dashboard",
+                value=st.session_state.apply_reval_analytics,
+                key="analytics_reval_toggle",
+                help="Applies declared Re-Evaluation marks to student theory subjects and recalculates Year Backs & Promoted status."
+            )
+            st.session_state.apply_reval_analytics = apply_reval
+        
+        with ctrl2:
+            st.markdown(f"**{found_students_count} Students** ({len(found_reval_rows)} Subjects) in REVAL DB")
+            
+        with ctrl3:
+            if st.button("💾 Permanently Save to DB", help="Permanently overwrite the results table in SQLite with declared REVAL marks."):
+                from core.db import apply_reval_to_results
+                updated_db = apply_reval_to_results(current_inst)
+                st.success(f"✅ Successfully updated {updated_db} subject marks permanently in database!")
+                st.cache_data.clear()
+                st.rerun()
+
+    if apply_reval:
+        raw_df, num_updated = apply_reval_marks_to_df(raw_orig, reval_df)
+        student_orig = build_student_summary(raw_orig)
+        student_df = build_student_summary(raw_df)
+
+        orig_cp = int(student_orig["clear_pass"].sum())
+        orig_pwb = int((student_orig["passed"] & ~student_orig["clear_pass"]).sum())
+        orig_yb = int(student_orig["year_back"].sum())
+
+        new_cp = int(student_df["clear_pass"].sum())
+        new_pwb = int((student_df["passed"] & ~student_df["clear_pass"]).sum())
+        new_yb = int(student_df["year_back"].sum())
+
+        saved_yb_count = int((student_orig["year_back"] & ~student_df["year_back"]).sum())
+        newly_cleared = int((~student_orig["clear_pass"] & student_df["clear_pass"]).sum())
+
+        st.success(
+            f"🟢 **Viewing Post-REVAL Results**: Applied Reval marks to **{num_updated}** subjects! "
+            f"🎓 **{saved_yb_count} student(s) saved from Year Back!** "
+            f"🎉 **{newly_cleared} student(s) achieved Clear Pass!**"
+        )
+
+        if saved_yb_count > 0:
+            with st.expander(f"🎓 View {saved_yb_count} Students Saved from Year Back (Promoted with <5 Backs)", expanded=False):
+                saved_mask = student_orig["year_back"] & ~student_df["year_back"]
+                saved_enrs = student_orig[saved_mask]["enrollment"].tolist()
+                saved_rows = []
+                for enr in saved_enrs:
+                    s_o = student_orig[student_orig["enrollment"] == enr].iloc[0]
+                    s_n = student_df[student_df["enrollment"] == enr].iloc[0]
+                    saved_rows.append({
+                        "Enrollment": enr,
+                        "Name": s_n["student_name"],
+                        "Branch": s_n["branch"],
+                        "Backs Before Reval": s_o["back_count"],
+                        "Backs After Reval": s_n["back_count"],
+                        "New Status": s_n["status"],
+                        "Remaining Backs": s_n["back_papers"]
+                    })
+                df_saved = pd.DataFrame(saved_rows)
+                df_saved.index = range(1, len(df_saved) + 1)
+                st.dataframe(df_saved, use_container_width=True)
+    else:
+        raw_df = raw_orig
+        student_df = build_student_summary(raw_df)
 
     # ── Global KPIs ───────────────────────────────────────────────────────────────
     total_students = len(student_df)
-    clear_pass_count = student_df["clear_pass"].sum()
-    passed_with_back = student_df["passed"].sum() - clear_pass_count
-    fail_count     = total_students - clear_pass_count - passed_with_back
+    clear_pass_count = int(student_df["clear_pass"].sum())
+    passed_with_back = int((student_df["passed"] & ~student_df["clear_pass"]).sum())
+    year_back_count  = int(student_df["year_back"].sum())
     pass_pct       = round(clear_pass_count / total_students * 100, 1) if total_students else 0
     avg_score      = round(student_df["score"].mean(), 1) if total_students else 0
     top_score      = student_df["score"].max() if total_students else 0
@@ -315,9 +480,9 @@ def render():
     c1, c2, c3, c4, c5 = st.columns(5)
     kpis = [
         (total_students, "Total Students", "#6366f1"),
-        (clear_pass_count, "Clear Pass", "#10b981"),
-        (passed_with_back, "Pass w/ Back", "#f59e0b"),
-        (fail_count, "Failed", "#ef4444"),
+        (clear_pass_count, "Clear Pass (0 Backs)", "#10b981"),
+        (passed_with_back, "Promoted w/ Back (1-4)", "#f59e0b"),
+        (year_back_count, "Year Back (≥5 Backs)", "#ef4444"),
         (f"{pass_pct}%", "Clear Pass Rate", "#3b82f6"),
     ]
     for col, (val, lbl, color) in zip([c1, c2, c3, c4, c5], kpis):
@@ -425,13 +590,29 @@ def render():
                 st.dataframe(top10.rename(columns={"student_name":"Name","percentage":"Percentage","score":"Score","grand_total":"Grand Total","passed":"Pass"}), use_container_width=True)
 
             st.markdown("#### Full Branch Result Sheet")
-            display_b = branch_students[["enrollment","student_name","father_name","score","grand_total","status","passed"]].copy()
-            display_b["Status"] = display_b.apply(lambda row: f"✅ {row['status']}" if row["passed"] else f"❌ {row['status']}", axis=1)
-            display_b = display_b.drop(["status", "passed"], axis=1)
+            b_filt = st.radio(
+                "Filter Students by Promotion Status:",
+                ["All Students", "✅ Clear Pass (0 Backs)", "⚠️ Promoted with Backs (1-4 Backs)", "❌ Year Back (≥5 Backs)"],
+                horizontal=True,
+                key=f"b_filt_{selected_branch}"
+            )
+            
+            filtered_branch_students = branch_students.copy()
+            if b_filt == "✅ Clear Pass (0 Backs)":
+                filtered_branch_students = filtered_branch_students[filtered_branch_students["clear_pass"]]
+            elif b_filt == "⚠️ Promoted with Backs (1-4 Backs)":
+                filtered_branch_students = filtered_branch_students[filtered_branch_students["passed"] & ~filtered_branch_students["clear_pass"]]
+            elif b_filt == "❌ Year Back (≥5 Backs)":
+                filtered_branch_students = filtered_branch_students[filtered_branch_students["year_back"]]
+
+            display_b = filtered_branch_students[["enrollment","student_name","father_name","score","back_count","status","back_papers"]].copy()
+            display_b["Status"] = display_b["status"].apply(lambda s: f"✅ {s}" if "CLEAR" in str(s) else (f"⚠️ {s}" if "PROMOTED" in str(s) else f"❌ {s}"))
+            display_b = display_b.drop(["status"], axis=1)
             display_b.index = range(1, len(display_b)+1)
             st.dataframe(
                 display_b.rename(columns={
-                    "enrollment":"Enrollment","student_name":"Name","father_name":"Father","score":"Score","grand_total":"Grand Total"
+                    "enrollment":"Enrollment","student_name":"Name","father_name":"Father",
+                    "score":"Score","back_count":"Backs Count","back_papers":"Back Papers List"
                 }),
                 use_container_width=True
             )
@@ -725,13 +906,13 @@ def render():
             filtered = filtered[filtered["branch"] == branch_filter_s]
 
         st.markdown(f"**{len(filtered)} students found**")
-        display_filtered = filtered[["enrollment","student_name","father_name","branch","score","percentage","status","passed"]].copy()
-        display_filtered["Passed"] = display_filtered["passed"].map({True:"✅ Pass", False:"❌ Fail"})
-        display_filtered = display_filtered.drop("passed", axis=1)
+        display_filtered = filtered[["enrollment","student_name","father_name","branch","score","percentage","back_count","status","back_papers"]].copy()
+        display_filtered["Status"] = display_filtered["status"].apply(lambda s: f"✅ {s}" if "CLEAR" in str(s) else (f"⚠️ {s}" if "PROMOTED" in str(s) else f"❌ {s}"))
+        display_filtered = display_filtered.drop("status", axis=1)
         display_filtered.index = range(1, len(display_filtered)+1)
         st.dataframe(display_filtered.rename(columns={
             "enrollment":"Enrollment","student_name":"Name","father_name":"Father","branch":"Branch",
-            "score":"Score","percentage":"Percentage","status":"Status"
+            "score":"Score","percentage":"Percentage","back_count":"Backs Count","back_papers":"Back Papers"
         }), use_container_width=True)
 
         # Click to expand a single student's subject marks
@@ -743,11 +924,27 @@ def render():
                 format_func=lambda e: f"{e} — {filtered[filtered['enrollment']==e]['student_name'].values[0]}",
                 key="student_detail_sel"
             )
-            student_marks = raw_df[raw_df["enrollment"] == sel_enroll][
-                ["paper_code","paper_name","max_marks","min_marks","marks_obtained","is_pass_subject"]
-            ].copy()
-            student_marks["Result"] = student_marks["is_pass_subject"].map({True:"✅","False":"❌"})
+            
+            s_row = filtered[filtered["enrollment"] == sel_enroll].iloc[0]
+            stat_str = str(s_row["status"])
+            if "CLEAR" in stat_str:
+                badge = f"✅ **{stat_str}**"
+            elif "PROMOTED" in stat_str:
+                badge = f"⚠️ **{stat_str}** (Eligible for Promotion / Next Year)"
+            else:
+                badge = f"❌ **{stat_str}** (Year Back - Not Eligible for Next Year)"
+                
+            st.markdown(f"**Student Promotion Status**: {badge} &nbsp;|&nbsp; **Back Papers**: `{s_row['back_papers']}`")
+
+            cols_to_get = ["paper_code","paper_name","max_marks","min_marks","marks_obtained","is_pass_subject"]
+            if "is_reval_updated" in raw_df.columns:
+                cols_to_get.append("is_reval_updated")
+            student_marks = raw_df[raw_df["enrollment"] == sel_enroll][cols_to_get].copy()
+            student_marks["Result"] = student_marks["is_pass_subject"].map({True:"✅ Pass", False:"❌ Back"})
             student_marks = student_marks.drop("is_pass_subject", axis=1)
+            if "is_reval_updated" in student_marks.columns:
+                student_marks["Reval"] = student_marks["is_reval_updated"].map({True:"🔄 REVAL", False:"-"})
+                student_marks = student_marks.drop("is_reval_updated", axis=1)
             student_marks.index = range(1, len(student_marks)+1)
             
             c_p1, c_p2 = st.columns([1, 4])
@@ -791,8 +988,17 @@ def render():
 
         with col_e2:
             st.markdown("#### Student Summary")
-            summary_export = student_df[["enrollment","student_name","father_name","branch","score","grand_total","passed"]].copy()
-            summary_export["passed"] = summary_export["passed"].map({True:"PASS",False:"FAIL"})
+            summary_export = student_df[["enrollment","student_name","father_name","branch","score","back_count","status","back_papers"]].copy()
+            summary_export = summary_export.rename(columns={
+                "enrollment": "Enrollment",
+                "student_name": "Student Name",
+                "father_name": "Father Name",
+                "branch": "Branch",
+                "score": "Score",
+                "back_count": "Backs Count",
+                "status": "Promotion Status",
+                "back_papers": "Back Papers List"
+            })
             csv2 = summary_export.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Download Student Summary CSV", data=csv2, file_name="bteup_student_summary.csv", mime="text/csv", use_container_width=True)
             xl2 = to_excel_bytes(summary_export)
