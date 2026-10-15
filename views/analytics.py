@@ -399,34 +399,40 @@ def render():
     </div>
     """, unsafe_allow_html=True)
 
-    ctrl1, ctrl2, ctrl3 = st.columns([3, 2, 2])
-    with ctrl1:
-        apply_reval = st.toggle(
-            "✨ Apply REVAL Marks to Dashboard",
-            value=st.session_state.apply_reval_analytics,
-            key="analytics_reval_toggle",
-            help="Applies declared Re-Evaluation marks to student theory subjects and recalculates Year Backs & Promoted status."
-        )
-        st.session_state.apply_reval_analytics = apply_reval
-    
-    with ctrl2:
-        if found_count > 0:
-            st.markdown(f"**{found_students_count} Students** ({found_count} Subjects) in REVAL DB")
+    btn_c1, btn_c2, btn_c3 = st.columns([3, 2, 2])
+    with btn_c1:
+        if st.session_state.apply_reval_analytics:
+            if st.button("📋 Switch Back to Original Marks", type="secondary", use_container_width=True):
+                st.session_state.apply_reval_analytics = False
+                st.rerun()
         else:
-            st.info("ℹ️ No REVAL marks found in DB yet.")
-        
-    with ctrl3:
+            if st.button("🔄 Apply REVAL Marks (Change Earlier Marks)", type="primary", use_container_width=True):
+                st.session_state.apply_reval_analytics = True
+                st.rerun()
+    
+    with btn_c2:
         if found_count > 0:
-            if st.button("💾 Permanently Save to DB", help="Permanently overwrite the results table in SQLite with declared REVAL marks.", use_container_width=True):
+            st.metric("REVAL in Database", f"{found_count} Subjects", f"{found_students_count} Students")
+        else:
+            st.info("ℹ️ No REVAL records in DB yet.")
+        
+    with btn_c3:
+        if found_count > 0:
+            if st.button("💾 Save REVAL to Database", help="Permanently overwrite the results table in SQLite with declared REVAL marks.", use_container_width=True):
                 from core.db import apply_reval_to_results
                 updated_db = apply_reval_to_results(current_inst)
                 st.success(f"✅ Successfully updated {updated_db} subject marks permanently in database!")
                 st.cache_data.clear()
+                st.session_state.apply_reval_analytics = True
                 st.rerun()
         else:
             if st.button("🔍 Go to REVAL Downloader", use_container_width=True):
                 st.session_state.page = "reval"
                 st.rerun()
+
+    apply_reval = st.session_state.apply_reval_analytics
+    if not apply_reval:
+        st.markdown("<div style='color:#64748b; font-size:0.9rem; margin-bottom:1rem;'>ℹ️ Currently viewing <b>Original Exam Marks</b>. Click the primary button above to replace with REVAL marks and analyze Year Backs.</div>", unsafe_allow_html=True)
 
     if apply_reval:
         raw_df, num_updated = apply_reval_marks_to_df(raw_orig, reval_df)

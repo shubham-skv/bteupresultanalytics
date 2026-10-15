@@ -259,8 +259,18 @@ def render():
     # TAB 3: VIEW & EXPORT REVAL RESULTS
     # ══════════════════════════════════════════════════════════════════════════════
     with tab3:
-        st.markdown("### 📊 Stored REVAL Results")
+        top_c1, top_c2 = st.columns([3, 1])
+        with top_c1:
+            st.markdown("### 📊 Stored REVAL Results")
+        with top_c2:
+            if st.button("📊 Open in Analytics Dashboard", type="primary", use_container_width=True):
+                st.session_state.apply_reval_analytics = True
+                st.session_state.page = "analytics"
+                st.rerun()
+
         reval_df = get_all_reval_results(current_inst)
+        if reval_df.empty:
+            reval_df = get_all_reval_results(None)
 
         if reval_df.empty:
             st.info("No REVAL results have been extracted yet. Use the tabs above to extract results!")

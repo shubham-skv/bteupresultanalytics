@@ -251,6 +251,20 @@ if st.session_state.page == "home":
     """)
 
     st.markdown("---")
+    st.markdown("### 🔄 REVAL & Year Back Analysis")
+    st.markdown("Calculate which students are **Promoted (< 5 Backs)** or have a **Year Back (≥ 5 Backs)**, and simulate the effect of Re-Evaluation marks.")
+    c_btn1, c_btn2 = st.columns(2)
+    with c_btn1:
+        if st.button("📊 Open Analytics with REVAL Marks Applied", type="primary", use_container_width=True):
+            st.session_state.apply_reval_analytics = True
+            st.session_state.page = "analytics"
+            st.rerun()
+    with c_btn2:
+        if st.button("🔍 Go to REVAL Downloader", use_container_width=True):
+            st.session_state.page = "reval"
+            st.rerun()
+
+    st.markdown("---")
     st.markdown("### 📥 Quick PDF Download")
     st.markdown("Select a branch to instantly download a ZIP of all individual original BTEUP result PDFs for that branch.")
     try:
