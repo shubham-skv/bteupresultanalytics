@@ -485,6 +485,7 @@ def render():
     clear_pass_count = int(student_df["clear_pass"].sum())
     passed_with_back = int((student_df["passed"] & ~student_df["clear_pass"]).sum())
     year_back_count  = int(student_df["year_back"].sum())
+    fail_count       = year_back_count
     pass_pct       = round(clear_pass_count / total_students * 100, 1) if total_students else 0
     avg_score      = round(student_df["score"].mean(), 1) if total_students else 0
     top_score      = student_df["score"].max() if total_students else 0
@@ -547,8 +548,8 @@ def render():
         with col_r:
             st.markdown("#### Pass vs Fail Distribution")
             fig_pie = px.pie(
-                values=[clear_pass_count, passed_with_back, fail_count],
-                names=["Clear Pass", "Passed with Back", "Failed"],
+                values=[clear_pass_count, passed_with_back, year_back_count],
+                names=["Clear Pass (0 Backs)", "Promoted with Back (1-4)", "Year Back (≥5 Backs)"],
                 color_discrete_sequence=["#10b981", "#f59e0b", "#ef4444"],
                 template="plotly_dark",
                 hole=0.5,
